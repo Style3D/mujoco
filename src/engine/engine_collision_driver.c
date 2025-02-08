@@ -181,6 +181,11 @@ static int canCollide(const mjModel* m, int bf) {
     return (m->body_contype[bf] || m->body_conaffinity[bf]);
   } else {
     int f = bf - m->nbody;
+#ifdef CUSTOM_SIM
+    // skip mujoco collision solver
+    if (m->flex_custom[f])
+        return 0;
+#endif
     return (m->flex_contype[f] || m->flex_conaffinity[f]);
   }
 }
@@ -193,6 +198,20 @@ static int canCollide2(const mjModel* m, int bf1, int bf2) {
   int conaffinity1 = (bf1 < nbody) ? m->body_conaffinity[bf1] : m->flex_conaffinity[bf1-nbody];
   int contype2 = (bf2 < nbody) ? m->body_contype[bf2] : m->flex_contype[bf2-nbody];
   int conaffinity2 = (bf2 < nbody) ? m->body_conaffinity[bf2] : m->flex_conaffinity[bf2-nbody];
+
+#ifdef CUSTOM_SIM
+  // skip mujoco collision solver
+  int f1 = bf1 - nbody;
+  int f2 = bf2 - nbody;
+  int flex_custom1 = 0;
+  int flex_custom2 = 0;
+  if (f1 >= 0)
+      flex_custom1 = m->flex_custom[f1];
+  if (f2 >= 0)
+      flex_custom2 = m->flex_custom[f2];
+  if (flex_custom1 || flex_custom2)
+      return 0;
+#endif
 
   // opposite of bitmask filter
   return (!filterBitmask(contype1, conaffinity1, contype2, conaffinity2));
@@ -425,6 +444,11 @@ void mj_collision(const mjModel* m, mjData* d) {
 
   // flex self-collisions
   for (int f=0; f < m->nflex; f++) {
+#ifdef CUSTOM_SIM
+      // skip mujoco collision solver
+      if (m->flex_custom[f])
+          continue;
+#endif
     if (!m->flex_rigid[f] && (m->flex_contype[f] & m->flex_conaffinity[f])) {
       // internal collisions
       if (m->flex_internal[f]) {

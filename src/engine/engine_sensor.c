@@ -1466,6 +1466,12 @@ void mj_energyPos(const mjModel* m, mjData* d) {
       if (m->flex_rigid[i] || stiffness == 0 || m->flex_dim[i] > 1) {
         continue;
       }
+#ifdef CUSTOM_SIM
+      else if (m->flex_custom[i]) {
+        // skip custom flex
+        continue;
+      }
+#endif
 
       // process non-rigid edges of this flex
       int flex_edgeadr = m->flex_edgeadr[i];

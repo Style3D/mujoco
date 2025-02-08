@@ -1440,7 +1440,12 @@ void mjd_passive_vel(const mjModel* m, mjData* d) {
     if (m->flex_rigid[f] || !B) {
       continue;
     }
-
+#ifdef CUSTOM_SIM
+      // skip custom flex
+    if (m->flex_custom[f]) {
+      continue;
+    }
+#endif
     int flex_edgeadr = m->flex_edgeadr[f];
     int flex_edgenum = m->flex_edgenum[f];
 

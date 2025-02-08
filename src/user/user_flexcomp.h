@@ -99,6 +99,9 @@ class mjCFlexcomp {
   mjsOrientation alt;             // alternative orientation
 
   // set by user or computed internally
+#ifdef CUSTOM_SIM
+  bool custom;                    // use custom simulator instead of mujoco
+#endif
   bool rigid;                     // all vertices are in parent body (all pinned)
   bool centered;                  // all vertex coordinates are (0,0,0) (nothing pinned)
   std::vector<double> point;      // flex bodies/vertices

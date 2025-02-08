@@ -593,15 +593,21 @@ void mj_instantiateEquality(const mjModel* m, mjData* d) {
       size = 1;
       break;
 
-    case mjEQ_FLEX:
-      flex_edgeadr = m->flex_edgeadr[id[0]];
-      flex_edgenum = m->flex_edgenum[id[0]];
-      // add one constraint per non-rigid edge
-      for (int e=flex_edgeadr; e < flex_edgeadr+flex_edgenum; e++) {
-        // skip rigid
-        if (m->flexedge_rigid[e]) {
-          continue;
-        }
+      case mjEQ_FLEX:
+        flex_edgeadr = m->flex_edgeadr[id[0]];
+        flex_edgenum = m->flex_edgenum[id[0]];
+        // add one constraint per non-rigid edge
+        for (int e=flex_edgeadr; e < flex_edgeadr+flex_edgenum; e++) {
+#ifdef CUSTOM_SIM
+          // skip custom flex
+          if (m->flex_custom[id[0]]) {
+            continue;
+          }
+#endif
+          // skip rigid
+          if (m->flexedge_rigid[e]) {
+            continue;
+          }
 
         // position error
         cpos[0] = d->flexedge_length[e] - m->flexedge_length0[e];
@@ -1081,6 +1087,12 @@ void mj_diagApprox(const mjModel* m, mjData* d) {
         int flex_edgeadr = m->flex_edgeadr[f];
         int flex_edgenum = m->flex_edgenum[f];
         for (int e=flex_edgeadr; e<flex_edgeadr+flex_edgenum; e++) {
+#ifdef CUSTOM_SIM
+            // skip custom flex
+            if (m->flex_custom[f]) {
+              continue;
+            }
+#endif
           if (!m->flexedge_rigid[e]) {
             dA[i++] = m->flexedge_invweight0[e];
           }
@@ -1652,6 +1664,13 @@ static int mj_ne(const mjModel* m, mjData* d, int* nnz) {
             size--;
             continue;
           }
+#ifdef CUSTOM_SIM
+          // skip custom flex
+          else if (m->flex_custom[id[0]]) {
+            size--;
+            continue;
+          }
+#endif
 
           // accumulate NV if needed
           if (nnz) {
