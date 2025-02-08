@@ -1447,6 +1447,12 @@ void mjd_passive_vel(const mjModel* m, mjData* d) {
 
   // flex edge damping
   for (int f=0; f < m->nflex; f++) {
+#ifdef CUSTOM_SIM
+      // skip custom flex
+    if (m->flex_custom[f]) {
+      continue;
+    }
+#endif
     if (!m->flex_rigid[f] && m->flex_edgedamping[f]) {
       mjtNum B = -m->flex_edgedamping[f];
       int flex_edgeadr = m->flex_edgeadr[f];

@@ -43,6 +43,7 @@ option(MUJOCO_BUILD_SIMULATE "Build simulate library for MuJoCo" ON)
 option(MUJOCO_BUILD_TESTS "Build tests for MuJoCo" ON)
 option(MUJOCO_TEST_PYTHON_UTIL "Build and test utility libraries for Python bindings" ON)
 option(MUJOCO_WITH_USD "Build with OpenUSD" OFF)
+option(MUJOCO_BUILD_STYLE3D "Build style3d simulator plugin for MuJoCo" OFF)
 
 # Option to provide a path to an existing USD build directory or to Houdini HFS directory.
 set(USD_DIR "" CACHE PATH "Path to an existing USD build directory.")
@@ -114,6 +115,11 @@ add_subdirectory(src/xml)
 add_subdirectory(src/render)
 add_subdirectory(src/thread)
 add_subdirectory(src/ui)
+
+if(MUJOCO_BUILD_STYLE3D)
+  add_subdirectory(plugin/style3dsim)
+  target_compile_definitions(mujoco PUBLIC CUSTOM_SIM)
+endif()
 
 target_compile_definitions(mujoco PRIVATE _GNU_SOURCE CCD_STATIC_DEFINE MUJOCO_DLL_EXPORTS -DMC_IMPLEM_ENABLE)
 if(MUJOCO_ENABLE_AVX_INTRINSICS)

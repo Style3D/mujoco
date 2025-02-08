@@ -309,10 +309,10 @@ const char* MJCF[nMJCF][mjXATTRNUM] = {
               {"config", "*", "2", "key", "value"},
             {">"},
         {">"},
-        {"flexcomp", "*", "26", "name", "type", "group", "dim", "dof",
+        {"flexcomp", "*", "27", "name", "type", "group", "dim", "dof",
             "count", "spacing", "radius", "rigid", "mass", "inertiabox",
             "scale", "file", "point", "element", "texcoord", "material", "rgba",
-            "flatskin", "pos", "quat", "axisangle", "xyaxes", "zaxis", "euler", "origin"},
+            "flatskin", "pos", "quat", "axisangle", "xyaxes", "zaxis", "euler", "origin", "custom"},
         {"<"},
             {"edge", "?", "5", "equality", "solref", "solimp", "stiffness", "damping"},
             {"elasticity", "?", "5", "young", "poisson", "damping", "thickness", "elastic2d"},
@@ -2647,6 +2647,11 @@ void mjXReader::OneFlexcomp(XMLElement* elem, mjsBody* body, const mjVFS* vfs) {
   ReadAlternative(elem, fcomp.alt);
 
   // user or internal
+#ifdef CUSTOM_SIM
+  if (MapValue(elem, "custom", &n, bool_map, 2)) {
+    fcomp.custom = (n==1);
+  }
+#endif
   if (MapValue(elem, "rigid", &n, bool_map, 2)) {
     fcomp.rigid = (n == 1);
   }

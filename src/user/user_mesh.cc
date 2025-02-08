@@ -3931,7 +3931,9 @@ mjCFlex::mjCFlex(mjCModel* _model) {
   matid = -1;
   rigid = false;
   centered = false;
-
+#ifdef CUSTOM_SIM
+  custom = false;
+#endif
   PointToLocal();
   CopyFromSpec();
 }

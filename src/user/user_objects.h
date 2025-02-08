@@ -928,6 +928,9 @@ class mjCFlex_ : public mjCBase {
   int nedge;                              // number of edges
   int nelem;                              // number of elements
   int matid;                              // material id
+#ifdef CUSTOM_SIM
+  bool custom;                            // use custom simulator instead of mujoco
+#endif
   bool rigid;                             // all vertices attached to the same body
   bool centered;                          // all vertices coordinates (0,0,0)
   bool interpolated;                      // vertices are interpolated from nodes

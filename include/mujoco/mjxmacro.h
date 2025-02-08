@@ -377,6 +377,7 @@
     X   ( mjtNum,  flex_edgestiffness,    nflex,         1                    ) \
     X   ( mjtNum,  flex_edgedamping,      nflex,         1                    ) \
     X   ( mjtByte, flex_edgeequality,     nflex,         1                    ) \
+    X   ( mjtByte, flex_custom,            nflex,         1                    ) \
     X   ( mjtByte, flex_rigid,            nflex,         1                    ) \
     X   ( mjtByte, flexedge_rigid,        nflexedge,     1                    ) \
     X   ( mjtByte, flex_centered,         nflex,         1                    ) \
