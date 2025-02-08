@@ -2905,6 +2905,9 @@ void mjCModel::CopyObjects(mjModel* m) {
     }
     m->flex_edgestiffness[i] = (mjtNum)pfl->edgestiffness;
     m->flex_edgedamping[i] = (mjtNum)pfl->edgedamping;
+#ifdef CUSTOM_SIM
+    m->flex_custom[i] = pfl->custom;
+#endif // CUSTOM_SIM
     m->flex_rigid[i] = pfl->rigid;
     m->flex_centered[i] = pfl->centered;
     m->flex_internal[i] = pfl->internal;

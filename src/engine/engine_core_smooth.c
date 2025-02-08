@@ -577,6 +577,12 @@ void mj_flex(const mjModel* m, mjData* d) {
     if (m->flex_rigid[f] || m->flex_interp[f]) {
       continue;
     }
+#ifdef CUSTOM_SIM
+    // skip custom flex
+    else if (m->flex_custom[f]) {
+      continue;
+    }
+#endif
 
     // skip Jacobian if no built-in passive force is needed
     int skipjacobian = !m->flex_edgeequality[f] &&
@@ -2171,6 +2177,12 @@ void mj_rnePostConstraint(const mjModel* m, mjData* d) {
       int flex_edgenum = m->flex_edgenum[k];
 
       for (int e=flex_edgeadr; e < flex_edgeadr+flex_edgenum; e++) {
+#ifdef CUSTOM_SIM
+          // skip custom flex
+      if (m->flex_custom[k]) {
+          continue;
+      }
+#endif
         if (!m->flexedge_rigid[e]) {
           i++;
         }

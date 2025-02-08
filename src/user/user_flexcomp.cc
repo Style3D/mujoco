@@ -84,6 +84,9 @@ mjCFlexcomp::mjCFlexcomp(void) {
   equality = false;
   mjuu_setvec(pos, 0, 0, 0);
   mjuu_setvec(quat, 1, 0, 0, 0);
+#ifdef CUSTOM_SIM
+  custom = false;
+#endif
   rigid = false;
   centered = false;
   doftype = mjFCOMPDOF_FULL;
@@ -226,6 +229,15 @@ bool mjCFlexcomp::Make(mjsBody* body, char* error, int error_sz) {
     return comperr(error, "Element size must be a multiple of dim+1", error_sz);
   }
 
+#ifdef CUSTOM_SIM
+  // add 1 ghost point to avoid crash caused by plugin
+  if (custom) {
+    point.push_back(point[0]);
+    point.push_back(point[1]);
+    point.push_back(point[2]);
+  }
+#endif
+
   // get number of points
   int npnt = point.size()/3;
 
@@ -268,6 +280,13 @@ bool mjCFlexcomp::Make(mjsBody* body, char* error, int error_sz) {
 
   // construct pinned array
   pinned = vector<bool>(npnt, rigid);
+#ifdef CUSTOM_SIM
+  if (custom) {
+      // pin all points except the ghost point to remove freedom computing cost
+      pinned = vector<bool>(npnt, true);
+      pinned[npnt - 1] = false;
+  }
+#endif
 
   // handle pins if user did not specify rigid
   if (!rigid) {
@@ -400,6 +419,13 @@ bool mjCFlexcomp::Make(mjsBody* body, char* error, int error_sz) {
     used = std::vector<bool> (npnt, true);
   }
 
+#ifdef CUSTOM_SIM
+  if (custom) {
+      // force to use the ghost point to avoid crash of plugin
+      used[npnt - 1] = true;
+  }
+#endif
+
   // create flex, copy parameters
   mjCFlex* flex = model->AddFlex();
   mjsFlex* pf = &flex->spec;
@@ -410,6 +436,9 @@ bool mjCFlexcomp::Make(mjsBody* body, char* error, int error_sz) {
 
   flex->model = model;
   flex->id = id;
+#ifdef CUSTOM_SIM
+  flex->custom = custom;
+#endif
   mjs_setString(pf->name, name.c_str());
   mjs_setInt(pf->elem, element.data(), element.size());
   mjs_setFloat(pf->texcoord, texcoord.data(), texcoord.size());

@@ -121,6 +121,12 @@ static void mj_springdamper(const mjModel* m, mjData* d) {
     if (dim == 1 || m->flex_rigid[f] || k[0] == 0) {
       continue;
     }
+#ifdef CUSTOM_SIM
+    // skip custom flex
+    else if (m->flex_custom[f]) {
+      continue;
+    }
+#endif
 
     if (m->flex_interp[f]) {
       mjtNum xpos[mjMAXFLEXNODES], displ[mjMAXFLEXNODES], vel[mjMAXFLEXNODES];
@@ -304,6 +310,12 @@ static void mj_springdamper(const mjModel* m, mjData* d) {
     if (m->flex_rigid[f] || (stiffness == 0 && damping == 0)) {
       continue;
     }
+#ifdef CUSTOM_SIM
+    else if (m->flex_custom[f]) {
+      // skip custom flex
+      continue;
+    }
+#endif
 
     // process non-rigid edges of this flex (global edge index)
     int edgeend = m->flex_edgeadr[f] + m->flex_edgenum[f];
