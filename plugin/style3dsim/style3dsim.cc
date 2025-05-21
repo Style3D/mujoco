@@ -17,6 +17,7 @@
 #include <sstream>
 #include <optional>
 #include <unordered_map>
+#include <cstring>
 
 #include <mujoco/mjplugin.h>
 #include <mujoco/mjtnum.h>
@@ -27,7 +28,7 @@ namespace mujoco::plugin::style3dsim {
 namespace {
 
 // reads numeric attributes
-bool CheckAttr(const char* name, const mjModel* m, int instance) {
+bool CheckNumAttr(const char* name, const mjModel* m, int instance) {
   char *end;
   std::string value = mj_getPluginConfig(m, instance, name);
   value.erase(std::remove_if(value.begin(), value.end(), isspace), value.end());
@@ -73,7 +74,7 @@ Style3DSimHndManager::~Style3DSimHndManager() {
 std::optional<Style3DSim> Style3DSim::Create(
   const mjModel* m, mjData* d, int instance) {
 
-	if (CheckAttr("face", m, instance))
+	if (CheckNumAttr("face", m, instance))
 	{
 		std::vector<int> face;
 		String2Vector(mj_getPluginConfig(m, instance, "face"), face);
@@ -110,7 +111,7 @@ void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
 		if (useConvexHull)
 		{
 			int vertadr = m->mesh_vertadr[meshid];
-			int numMeshVert = m->mesh_vertnum[meshid];
+			//int numMeshVert = m->mesh_vertnum[meshid];
 			// get sizes of convex hull
 			int numConvexHullVert = m->mesh_graph[m->mesh_graphadr[meshid]];
 			int numConvexHullFace = m->mesh_graph[m->mesh_graphadr[meshid] + 1];
@@ -165,14 +166,66 @@ void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
 // plugin constructor
 Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vector<int>& face) {
 
-  mjtNum Stretch = strtod(mj_getPluginConfig(m, instance, "stretch"), nullptr);
-  //printf("Style3D Stretch %lf", Stretch);
+	if (CheckNumAttr("stretch", m, instance))
+	{
+		clothSimAttribute.stretchStiffness.x = strtod(mj_getPluginConfig(m, instance, "stretch"), nullptr) * 1.0e-3;
+		clothSimAttribute.stretchStiffness.y = clothSimAttribute.stretchStiffness.x;
+		clothSimAttribute.stretchStiffness.z = clothSimAttribute.stretchStiffness.x;
+	}
+	if (CheckNumAttr("bend", m, instance))
+	{
+		clothSimAttribute.bendStiffness.x = strtod(mj_getPluginConfig(m, instance, "bend"), nullptr) * 1.0e-9;
+		clothSimAttribute.bendStiffness.y = clothSimAttribute.bendStiffness.x;
+		clothSimAttribute.bendStiffness.z = clothSimAttribute.bendStiffness.x;
+	}
+	if (CheckNumAttr("thickness", m, instance))
+	{
+		clothSimAttribute.thickness = strtod(mj_getPluginConfig(m, instance, "thickness"), nullptr) * 1.0e-3;
+	}
+	if (CheckNumAttr("density", m, instance))
+	{
+		clothSimAttribute.density = strtod(mj_getPluginConfig(m, instance, "density"), nullptr) * 1.0e-3;
+	}
+	if (CheckNumAttr("friction", m, instance))
+	{
+		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
+		clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
+	}
 
-  clothFaces.resize(face.size() / 3);
+	{
+		const char* config = mj_getPluginConfig(m, instance, "convex");
+		if (config)
+		{
+			std::string tmp = config;
+			useConvexHull = tmp == "true";
+		}
+	}
 
-  std::memcpy(clothFaces.data(), face.data(), sizeof(int) * face.size());
+	{
+		const char* config = mj_getPluginConfig(m, instance, "gpu");
+		if (config)
+		{ 
+			std::string tmp = config;
+			useGPU = tmp == "true";
+		}
+	}
 
-  simHndManager = std::make_shared<Style3DSimHndManager>();
+	{
+		const char* config = mj_getPluginConfig(m, instance, "user");
+		if (config)
+			usr = config;
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "pwd");
+		if (config)
+			pwd = config;
+	}
+
+	clothFaces.resize(face.size() / 3);
+	std::memcpy(clothFaces.data(), face.data(), sizeof(int) * face.size());
+
+	simHndManager = std::make_shared<Style3DSimHndManager>();
 }
 
 Style3DSim::~Style3DSim() {
@@ -199,7 +252,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					printf("Fail login, errorType: %s, message: %s.\n", errorType, message);
 				}
 			};
-		SrLogin("user", "pwd", true, LoginCallback);
+		if (!SrIsLogin())
+			SrLogin(usr.c_str(), pwd.c_str(), true, LoginCallback);
 
 		// log callback
 		auto pfnSrLogCallback = [](const char* pFileName, const char* pFunName, int line, SrLogVerb eLogVerb, const char* pMsg)
@@ -229,7 +283,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 		simHndManager->worldHnd = SrWorld_Create();
 		SrWorldSimAttribute worldSimAttribute;
-		worldSimAttribute.enableGPU = false;
+		worldSimAttribute.enableGPU = useGPU; 
+		worldSimAttribute.enableSelfCollision = true;
 		worldSimAttribute.timeStep = m->opt.timestep;
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
@@ -254,7 +309,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.positions = pos.data();
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc);
-		SrClothSimAttribute clothSimAttribute;
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
 		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
 
@@ -330,8 +384,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 			const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
 			size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
-			const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-			size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
+			//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
+			//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
 
 			std::vector<SrVec3f> postions(vertNum);
 			for (size_t vId = 0; vId < postions.size(); vId++)
@@ -339,13 +393,13 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 				postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
 			}
 
-			SrMeshCollider_SetVertPositions(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
+			SrMeshCollider_MoveVert(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
 		}
 	}
 
 	SrWorld_StepSim(simHndManager->worldHnd);
 	bool isCaptured = SrWorld_FetchSim(simHndManager->worldHnd);
-	if (isCaptured)
+	if (isCaptured && frameIndex > 3) // trick, skip  first 3 frame, because mj do step when compile model
 	{
 		const SrVec3f* pos = SrCloth_GetVertPositions(simHndManager->clothHnd);
 		for (int i = 0; i < m->nflexvert - 1; i++)// trick, last vert is ghost
@@ -366,7 +420,7 @@ void Style3DSim::RegisterPlugin() {
   plugin.name = "mujoco.style3dsim.style3dsim";
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
-  const char* attributes[] = {"face", "edge", "thickness", "damping", "stretch", "bend"};
+  const char* attributes[] = {"face", "edge", "thickness", "damping", "stretch", "bend", "density", "friction", "convex", "gpu", "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
   plugin.nstate = +[](const mjModel* m, int instance) { return 0; };
