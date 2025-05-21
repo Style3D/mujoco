@@ -19,6 +19,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <string>
 
 #include <mujoco/mjdata.h>
 #include <mujoco/mjmodel.h>
@@ -71,9 +72,13 @@ class Style3DSim {
   std::vector<SrVec3i> clothFaces;
   std::vector<SrVec2i> geoMeshIndexPair;
   int frameIndex = 0;
-  static constexpr bool useConvexHull = true;
+  bool useConvexHull = false;
+  bool useGPU = false;
+  std::string usr = "";
+  std::string pwd = "";
 
   std::shared_ptr<Style3DSimHndManager> simHndManager;
+  SrClothSimAttribute clothSimAttribute;
 };
 
 }  // namespace mujoco::plugin::style3dsim

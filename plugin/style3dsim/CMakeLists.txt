@@ -47,9 +47,11 @@ target_link_options(
 # Link Style3DSimulator
 if(NOT DEFINED Style3DSimulatorDir)
 	if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
-		set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/)
-	else() ##Darwin
-		#set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/Mac)
+		set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/win)
+	elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+		set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/linux)
+	else() 
+		#TODO
 	endif()
 endif()
 
@@ -57,18 +59,26 @@ find_package(Style3DSimulator CONFIG REQUIRED PATHS ${Style3DSimulatorDir}/lib/c
 target_link_libraries(${TARGET_NAME} PUBLIC Style3DSimulator)
 
 # install lib
-function(custom_install simLib)
-	if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
-		install(FILES ${Style3DSimulatorDir}/bin/${simLib}.dll DESTINATION bin)
-		add_custom_command(TARGET ${TARGET_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			${Style3DSimulatorDir}/bin/${simLib}.dll $<TARGET_FILE_DIR:${TARGET_NAME}>)
-	endif()
+function(custom_install lib_path dest)
+	install(FILES ${lib_path} DESTINATION ${dest})
+	add_custom_command(TARGET ${TARGET_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			${lib_path} $<TARGET_FILE_DIR:${TARGET_NAME}>)
 endfunction()
 
-custom_install(Style3DSimulator)
-custom_install(Simulation)
-custom_install(Core)
-custom_install(CudaCore)
-custom_install(PluginCpu)
-custom_install(PluginCuda)
-custom_install(tbb)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+	custom_install(${Style3DSimulatorDir}/bin/Style3DSimulator.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/Simulation.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/Core.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/CudaCore.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/PluginCpu.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/PluginCuda.dll ${CMAKE_INSTALL_BINDIR})
+	custom_install(${Style3DSimulatorDir}/bin/tbb.dll ${CMAKE_INSTALL_BINDIR})
+elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+	custom_install(${Style3DSimulatorDir}/lib/libStyle3DSimulator.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libSimulation.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libCore.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libCudaCore.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libPluginCpu.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libPluginCuda.so ${CMAKE_INSTALL_LIBDIR})
+	custom_install(${Style3DSimulatorDir}/lib/libtbb.so.2 ${CMAKE_INSTALL_LIBDIR})
+endif()
