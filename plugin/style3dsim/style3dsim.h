@@ -74,6 +74,7 @@ class Style3DSim {
   int frameIndex = 0;
   bool useConvexHull = false;
   bool useGPU = false;
+  std::vector<int> pinVerts;
   std::string usr = "";
   std::string pwd = "";
 

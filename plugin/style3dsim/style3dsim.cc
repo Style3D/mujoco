@@ -210,6 +210,11 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 		}
 	}
 
+	if (CheckNumAttr("pin", m, instance))
+	{
+		String2Vector(mj_getPluginConfig(m, instance, "pin"), pinVerts);
+	}
+
 	{
 		const char* config = mj_getPluginConfig(m, instance, "user");
 		if (config)
@@ -286,11 +291,12 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		worldSimAttribute.enableGPU = useGPU; 
 		worldSimAttribute.enableSelfCollision = true;
 		worldSimAttribute.timeStep = m->opt.timestep;
+		worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction = clothSimAttribute.dynamicFriction; // use same friction, may change in future
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
 		std::vector<SrVec3f>	pos(m->nflexvert);
 		std::vector<SrVec2f>	materialCoords(m->nflexvert);
-		std::vector<bool>	isPinned(m->nflexvert, false);
+		std::vector<char>	isPinned(m->nflexvert, 0);
 
 		for (int i = 0; i < pos.size(); i++)
 		{
@@ -302,6 +308,12 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			materialCoords[i].y = pos[i].z;
 		}
 
+		for (auto& v : pinVerts)
+		{
+			if (v >= 0 && v < m->nflexvert)
+				isPinned[v] = 1;
+		}
+
 		//create cloth
 		SrMeshDesc meshDesc;
 		meshDesc.numVertices = pos.size() -1 ; // trick, last vert is ghost
@@ -310,6 +322,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc);
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
+		SrCloth_SetVertPinFlags(simHndManager->clothHnd, meshDesc.numVertices, (bool*)isPinned.data());
 		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
 
 		CreateStaticMeshes(m, d);
@@ -395,6 +408,18 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 			SrMeshCollider_MoveVert(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
 		}
+
+		// set cloth positions for pin verts
+		int numPin = pinVerts.size();
+		std::vector<SrVec3f>	pos(numPin);
+		for (int i = 0; i < numPin; i++)
+		{
+			int v = pinVerts[i];
+			pos[i].x = m->flex_vert[3 * v + 0];
+			pos[i].y = m->flex_vert[3 * v + 2];
+			pos[i].z = -m->flex_vert[3 * v + 1];
+		}
+		SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
 	}
 
 	SrWorld_StepSim(simHndManager->worldHnd);
@@ -420,7 +445,7 @@ void Style3DSim::RegisterPlugin() {
   plugin.name = "mujoco.style3dsim.style3dsim";
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
-  const char* attributes[] = {"face", "edge", "thickness", "damping", "stretch", "bend", "density", "friction", "convex", "gpu", "user", "pwd"};
+  const char* attributes[] = {"face", "edge", "thickness", "damping", "stretch", "bend", "density", "friction", "convex", "gpu", "pin", "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
   plugin.nstate = +[](const mjModel* m, int instance) { return 0; };
