@@ -186,10 +186,25 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 	{
 		clothSimAttribute.density = strtod(mj_getPluginConfig(m, instance, "density"), nullptr) * 1.0e-3;
 	}
+
+	if (CheckNumAttr("pin", m, instance))
+	{
+		String2Vector(mj_getPluginConfig(m, instance, "pin"), pinVerts);
+	}
+
 	if (CheckNumAttr("friction", m, instance))
 	{
 		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
 		clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
+
+		colliderSimAttribute.dynamicFriction = colliderSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
+
+		worldSimAttribute.groundDynamicFriction = worldSimAttribute.groundStaticFriction = clothSimAttribute.dynamicFriction;
+	}
+
+	if (CheckNumAttr("gap", m, instance))
+	{
+		colliderSimAttribute.CollisionGap = strtod(mj_getPluginConfig(m, instance, "gap"), nullptr) * 1.0e-3;
 	}
 
 	{
@@ -202,17 +217,31 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 	}
 
 	{
+		const char* config = mj_getPluginConfig(m, instance, "selfcollide");
+		if (config)
+		{
+			std::string tmp = config;
+			worldSimAttribute.enableSelfCollision = worldSimAttribute.enableUntangle = tmp == "true";
+		}
+	}
+
+	if (CheckNumAttr("airdamping", m, instance))
+	{
+		worldSimAttribute.airDamping = strtod(mj_getPluginConfig(m, instance, "airdamping"), nullptr);
+	}
+
+	if (CheckNumAttr("groundheight", m, instance))
+	{
+		worldSimAttribute.groundHeight = strtod(mj_getPluginConfig(m, instance, "groundheight"), nullptr) * 1.0e-3;
+	}
+
+	{
 		const char* config = mj_getPluginConfig(m, instance, "gpu");
 		if (config)
 		{ 
 			std::string tmp = config;
-			useGPU = tmp == "true";
+			worldSimAttribute.enableGPU = tmp == "true";
 		}
-	}
-
-	if (CheckNumAttr("pin", m, instance))
-	{
-		String2Vector(mj_getPluginConfig(m, instance, "pin"), pinVerts);
 	}
 
 	{
@@ -287,11 +316,12 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		SrSetLogCallback(pfnSrLogCallback);
 
 		simHndManager->worldHnd = SrWorld_Create();
-		SrWorldSimAttribute worldSimAttribute;
-		worldSimAttribute.enableGPU = useGPU; 
-		worldSimAttribute.enableSelfCollision = true;
+		
 		worldSimAttribute.timeStep = m->opt.timestep;
-		worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction = clothSimAttribute.dynamicFriction; // use same friction, may change in future
+		worldSimAttribute.iterations = m->opt.iterations;
+		worldSimAttribute.gravity.x = m->opt.gravity[0];
+		worldSimAttribute.gravity.y = m->opt.gravity[2];
+		worldSimAttribute.gravity.z = -m->opt.gravity[1];
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
 		std::vector<SrVec3f>	pos(m->nflexvert);
@@ -370,7 +400,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			colliderMeshDesc.positions = postions.data();
 			colliderMeshDesc.triangles = triangles.data();
 			simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
-			SrColliderSimAttribute colliderSimAttribute;
+			
 			SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
 			SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
 		}
@@ -445,7 +475,11 @@ void Style3DSim::RegisterPlugin() {
   plugin.name = "mujoco.style3dsim.style3dsim";
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
-  const char* attributes[] = {"face", "edge", "thickness", "damping", "stretch", "bend", "density", "friction", "convex", "gpu", "pin", "user", "pwd"};
+  const char* attributes[] = {"face", "edge", 
+							  "stretch", "bend", "thickness", "density", "pin",
+							  "friction", "gap", "convex", "selfcollide",
+							  "airdamping", "groundheight", "gpu",
+							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
   plugin.nstate = +[](const mjModel* m, int instance) { return 0; };
