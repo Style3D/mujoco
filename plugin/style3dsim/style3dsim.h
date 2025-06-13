@@ -73,13 +73,14 @@ class Style3DSim {
   std::vector<SrVec2i> geoMeshIndexPair;
   int frameIndex = 0;
   bool useConvexHull = false;
-  bool useGPU = false;
   std::vector<int> pinVerts;
   std::string usr = "";
   std::string pwd = "";
 
   std::shared_ptr<Style3DSimHndManager> simHndManager;
   SrClothSimAttribute clothSimAttribute;
+  SrColliderSimAttribute colliderSimAttribute;
+  SrWorldSimAttribute worldSimAttribute;
 };
 
 }  // namespace mujoco::plugin::style3dsim
