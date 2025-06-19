@@ -31,6 +31,8 @@ namespace {
 bool CheckNumAttr(const char* name, const mjModel* m, int instance) {
   char *end;
   std::string value = mj_getPluginConfig(m, instance, name);
+  if (value.size() == 0)
+	return false;
   value.erase(std::remove_if(value.begin(), value.end(), isspace), value.end());
   strtod(value.c_str(), &end);
   return end == value.data() + value.size();
