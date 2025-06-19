@@ -72,6 +72,7 @@ class Style3DSim {
   std::vector<SrVec3i> clothFaces;
   std::vector<SrVec2i> geoMeshIndexPair;
   int frameIndex = 0;
+  int substep = 1;
   bool useConvexHull = false;
   std::vector<int> pinVerts;
   std::string usr = "";
