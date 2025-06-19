@@ -194,12 +194,14 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 
 	if (CheckNumAttr("friction", m, instance))
 	{
-		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
+		colliderSimAttribute.dynamicFriction = colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
+		worldSimAttribute.groundDynamicFriction = worldSimAttribute.groundStaticFriction = colliderSimAttribute.dynamicFriction;
+	}
+
+	if (CheckNumAttr("clothfriction", m, instance))
+	{
+		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "clothfriction"), nullptr);
 		clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
-
-		colliderSimAttribute.dynamicFriction = colliderSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
-
-		worldSimAttribute.groundDynamicFriction = worldSimAttribute.groundStaticFriction = clothSimAttribute.dynamicFriction;
 	}
 
 	if (CheckNumAttr("gap", m, instance))
@@ -230,6 +232,21 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 		worldSimAttribute.airDamping = strtod(mj_getPluginConfig(m, instance, "airdamping"), nullptr);
 	}
 
+	if (CheckNumAttr("stretchdamping", m, instance))
+	{
+		worldSimAttribute.stretchDamping = strtod(mj_getPluginConfig(m, instance, "stretchdamping"), nullptr);
+	}
+
+	if (CheckNumAttr("benddamping", m, instance))
+	{
+		worldSimAttribute.bendDamping = strtod(mj_getPluginConfig(m, instance, "benddamping"), nullptr);
+	}
+
+	if (CheckNumAttr("velsmoothing", m, instance))
+	{
+		worldSimAttribute.velSmoothing = strtod(mj_getPluginConfig(m, instance, "velsmoothing"), nullptr);
+	}
+
 	if (CheckNumAttr("groundheight", m, instance))
 	{
 		worldSimAttribute.groundHeight = strtod(mj_getPluginConfig(m, instance, "groundheight"), nullptr) * 1.0e-3;
@@ -242,6 +259,12 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 			std::string tmp = config;
 			worldSimAttribute.enableGPU = tmp == "true";
 		}
+	}
+
+	if (CheckNumAttr("substep", m, instance))
+	{
+		substep = strtod(mj_getPluginConfig(m, instance, "substep"), nullptr);
+		substep = std::max(1, substep);
 	}
 
 	{
@@ -317,7 +340,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 		simHndManager->worldHnd = SrWorld_Create();
 		
-		worldSimAttribute.timeStep = m->opt.timestep;
+		worldSimAttribute.timeStep = m->opt.timestep / substep;
 		worldSimAttribute.iterations = m->opt.iterations;
 		worldSimAttribute.gravity.x = m->opt.gravity[0];
 		worldSimAttribute.gravity.y = m->opt.gravity[2];
@@ -452,7 +475,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
 	}
 
-	SrWorld_StepSim(simHndManager->worldHnd);
+	for (int s = 0; s < substep; ++s)
+		SrWorld_StepSim(simHndManager->worldHnd);
 	bool isCaptured = SrWorld_FetchSim(simHndManager->worldHnd);
 	if (isCaptured && frameIndex > 3) // trick, skip  first 3 frame, because mj do step when compile model
 	{
@@ -477,8 +501,8 @@ void Style3DSim::RegisterPlugin() {
 
   const char* attributes[] = {"face", "edge", 
 							  "stretch", "bend", "thickness", "density", "pin",
-							  "friction", "gap", "convex", "selfcollide",
-							  "airdamping", "groundheight", "gpu",
+							  "friction", "clothfriction", "gap", "convex", "selfcollide",
+							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
