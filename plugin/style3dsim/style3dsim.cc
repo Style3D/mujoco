@@ -38,12 +38,13 @@ bool CheckNumAttr(const char* name, const mjModel* m, int instance) {
   return end == value.data() + value.size();
 }
 
-void String2Vector(const std::string& txt, std::vector<int>& vec) {
+template<typename T>
+void String2Vector(const std::string& txt, std::vector<T>& vec) {
 	std::stringstream strm(txt);
 	vec.clear();
 
 	while (!strm.eof()) {
-		int num;
+		T num;
 		strm >> num;
 		if (strm.fail()) {
 			break;
@@ -168,17 +169,49 @@ void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
 // plugin constructor
 Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vector<int>& face) {
 
-	if (CheckNumAttr("stretch", m, instance))
+	//if (CheckNumAttr("stretch", m, instance))
 	{
-		clothSimAttribute.stretchStiffness.x = strtod(mj_getPluginConfig(m, instance, "stretch"), nullptr) * 1.0e-3;
-		clothSimAttribute.stretchStiffness.y = clothSimAttribute.stretchStiffness.x;
-		clothSimAttribute.stretchStiffness.z = clothSimAttribute.stretchStiffness.x;
+		std::vector<double> stiffVec;
+		String2Vector(mj_getPluginConfig(m, instance, "stretch"), stiffVec);
+		if (stiffVec.size() >= 1)
+		{
+			// init three value
+			clothSimAttribute.stretchStiffness.x = stiffVec[0] * 1.0e-3;
+			clothSimAttribute.stretchStiffness.y = clothSimAttribute.stretchStiffness.x;
+			clothSimAttribute.stretchStiffness.z = clothSimAttribute.stretchStiffness.x;
+		}
+
+		if (stiffVec.size() >= 2)
+		{
+			clothSimAttribute.stretchStiffness.y = stiffVec[1] * 1.0e-3;
+		}
+
+		if (stiffVec.size() >= 3)
+		{
+			clothSimAttribute.stretchStiffness.z = stiffVec[2] * 1.0e-3;
+		}
 	}
-	if (CheckNumAttr("bend", m, instance))
+	//if (CheckNumAttr("bend", m, instance))
 	{
-		clothSimAttribute.bendStiffness.x = strtod(mj_getPluginConfig(m, instance, "bend"), nullptr) * 1.0e-9;
-		clothSimAttribute.bendStiffness.y = clothSimAttribute.bendStiffness.x;
-		clothSimAttribute.bendStiffness.z = clothSimAttribute.bendStiffness.x;
+		std::vector<double> stiffVec;
+		String2Vector(mj_getPluginConfig(m, instance, "bend"), stiffVec);
+		if (stiffVec.size() >= 1)
+		{
+			// init three value
+			clothSimAttribute.bendStiffness.x = stiffVec[0] * 1.0e-9;
+			clothSimAttribute.bendStiffness.y = clothSimAttribute.bendStiffness.x;
+			clothSimAttribute.bendStiffness.z = clothSimAttribute.bendStiffness.x;
+		}
+
+		if (stiffVec.size() >= 2)
+		{
+			clothSimAttribute.bendStiffness.y = stiffVec[1] * 1.0e-9;
+		}
+
+		if (stiffVec.size() >= 3)
+		{
+			clothSimAttribute.bendStiffness.z = stiffVec[2] * 1.0e-9;
+		}
 	}
 	if (CheckNumAttr("thickness", m, instance))
 	{
@@ -188,7 +221,10 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 	{
 		clothSimAttribute.density = strtod(mj_getPluginConfig(m, instance, "density"), nullptr) * 1.0e-3;
 	}
-
+	if (CheckNumAttr("pressure", m, instance))
+	{
+		clothSimAttribute.pressure = strtod(mj_getPluginConfig(m, instance, "pressure"), nullptr);
+	}
 	if (CheckNumAttr("pin", m, instance))
 	{
 		String2Vector(mj_getPluginConfig(m, instance, "pin"), pinVerts);
@@ -351,7 +387,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 		std::vector<SrVec3f>	pos(m->nflexvert);
 		std::vector<SrVec2f>	materialCoords(m->nflexvert);
-		std::vector<char>	isPinned(m->nflexvert, 0);
+		std::vector<char>	isPinned(pinVerts.size(), 1);
 
 		for (int i = 0; i < pos.size(); i++)
 		{
@@ -363,12 +399,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			materialCoords[i].y = pos[i].z;
 		}
 
-		for (auto& v : pinVerts)
-		{
-			if (v >= 0 && v < m->nflexvert)
-				isPinned[v] = 1;
-		}
-
 		//create cloth
 		SrMeshDesc meshDesc;
 		meshDesc.numVertices = pos.size() -1 ; // trick, last vert is ghost
@@ -377,7 +407,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc);
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
-		SrCloth_SetVertPinFlags(simHndManager->clothHnd, meshDesc.numVertices, (bool*)isPinned.data());
+		SrCloth_SetVertPinFlags(simHndManager->clothHnd, pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
 		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
 
 		CreateStaticMeshes(m, d);
@@ -461,7 +491,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 				postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
 			}
 
-			SrMeshCollider_MoveVert(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
+			SrMeshCollider_MoveVerts(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
 		}
 
 		// set cloth positions for pin verts
@@ -502,7 +532,7 @@ void Style3DSim::RegisterPlugin() {
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
   const char* attributes[] = {"face", "edge", 
-							  "stretch", "bend", "thickness", "density", "pin",
+							  "stretch", "bend", "thickness", "density", "pressure", "pin",
 							  "friction", "clothfriction", "gap", "convex", "selfcollide",
 							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
