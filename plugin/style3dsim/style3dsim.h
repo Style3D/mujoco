@@ -74,6 +74,8 @@ class Style3DSim {
   int frameIndex = 0;
   int substep = 1;
   bool useConvexHull = false;
+  bool keepWrinkles = false;
+  double solidifyStiff = 0.0;
   std::vector<int> pinVerts;
   std::string usr = "";
   std::string pwd = "";

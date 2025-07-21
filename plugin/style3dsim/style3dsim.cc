@@ -229,6 +229,19 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 	{
 		String2Vector(mj_getPluginConfig(m, instance, "pin"), pinVerts);
 	}
+	if (CheckNumAttr("solidifystiff", m, instance))
+	{
+		solidifyStiff = strtod(mj_getPluginConfig(m, instance, "solidifystiff"), nullptr) * 1.0e-3;
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "keepwrinkles");
+		if (config)
+		{
+			std::string tmp = config;
+			keepWrinkles = tmp == "true";
+		}
+	}
 
 	if (CheckNumAttr("friction", m, instance))
 	{
@@ -389,7 +402,10 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		std::vector<SrVec2f>	materialCoords(m->nflexvert);
 		std::vector<char>	isPinned(pinVerts.size(), 1);
 
-		for (int i = 0; i < pos.size(); i++)
+		std::vector<float>	solidifyStiffs(m->nflexvert);
+		std::vector<int>	solidifyVerts(m->nflexvert);
+
+		for (int i = 0; i < m->nflexvert; i++)
 		{
 			pos[i].x = d->flexvert_xpos[3 * i + 0];
 			pos[i].y = d->flexvert_xpos[3 * i + 2];
@@ -399,16 +415,26 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			materialCoords[i].y = pos[i].z;
 		}
 
+		if (solidifyStiff > 1.0e-3)
+		{
+			for (int i = 0; i < m->nflexvert; i++)
+			{
+				solidifyStiffs[i] = solidifyStiff;
+				solidifyVerts[i] = i;
+			}
+		}
+
 		//create cloth
 		SrMeshDesc meshDesc;
 		meshDesc.numVertices = pos.size() -1 ; // trick, last vert is ghost
 		meshDesc.numTriangles = clothFaces.size();
 		meshDesc.positions = pos.data();
 		meshDesc.triangles = clothFaces.data();
-		simHndManager->clothHnd = SrCloth_Create(&meshDesc);
+		simHndManager->clothHnd = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
 		SrCloth_SetVertPinFlags(simHndManager->clothHnd, pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
 		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
+		SrCloth_Solidify(simHndManager->clothHnd, simHndManager->worldHnd, meshDesc.numVertices, solidifyStiffs.data(), solidifyVerts.data());
 
 		CreateStaticMeshes(m, d);
 
@@ -532,8 +558,8 @@ void Style3DSim::RegisterPlugin() {
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
   const char* attributes[] = {"face", "edge", 
-							  "stretch", "bend", "thickness", "density", "pressure", "pin",
-							  "friction", "clothfriction", "gap", "convex", "selfcollide",
+							  "stretch", "bend", "thickness", "density", "pressure", "solidifystiff","pin",
+							  "friction", "clothfriction", "gap", "convex", "selfcollide", "keepwrinkles",
 							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
