@@ -402,8 +402,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		std::vector<SrVec2f>	materialCoords(m->nflexvert);
 		std::vector<char>	isPinned(pinVerts.size(), 1);
 
-		std::vector<float>	solidifyStiffs(m->nflexvert);
-		std::vector<int>	solidifyVerts(m->nflexvert);
+
 
 		for (int i = 0; i < m->nflexvert; i++)
 		{
@@ -415,15 +414,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			materialCoords[i].y = pos[i].z;
 		}
 
-		if (solidifyStiff > 1.0e-3)
-		{
-			for (int i = 0; i < m->nflexvert; i++)
-			{
-				solidifyStiffs[i] = solidifyStiff;
-				solidifyVerts[i] = i;
-			}
-		}
-
 		//create cloth
 		SrMeshDesc meshDesc;
 		meshDesc.numVertices = pos.size() -1 ; // trick, last vert is ghost
@@ -432,9 +422,25 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
-		SrCloth_SetVertPinFlags(simHndManager->clothHnd, pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
+
+		if (pinVerts.size() > 0)
+		{
+			SrCloth_SetVertPinFlags(simHndManager->clothHnd, pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
+		}
+
+		if (solidifyStiff > 1.0e-3)
+		{
+			std::vector<float>	solidifyStiffs(m->nflexvert);
+			std::vector<int>	solidifyVerts(m->nflexvert);
+			for (int i = 0; i < m->nflexvert; i++)
+			{
+				solidifyStiffs[i] = solidifyStiff;
+				solidifyVerts[i] = i;
+			}
+			SrCloth_Solidify(simHndManager->clothHnd, simHndManager->worldHnd, meshDesc.numVertices, solidifyStiffs.data(), solidifyVerts.data());
+		}
+
 		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
-		SrCloth_Solidify(simHndManager->clothHnd, simHndManager->worldHnd, meshDesc.numVertices, solidifyStiffs.data(), solidifyVerts.data());
 
 		CreateStaticMeshes(m, d);
 
@@ -530,7 +536,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			pos[i].y = m->flex_vert[3 * v + 2];
 			pos[i].z = -m->flex_vert[3 * v + 1];
 		}
-		SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
+		if (numPin > 0)
+			SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
 	}
 
 	for (int s = 0; s < substep; ++s)
