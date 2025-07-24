@@ -245,14 +245,24 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 
 	if (CheckNumAttr("friction", m, instance))
 	{
-		colliderSimAttribute.dynamicFriction = colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
-		worldSimAttribute.groundDynamicFriction = worldSimAttribute.groundStaticFriction = colliderSimAttribute.dynamicFriction;
+		colliderSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
+		worldSimAttribute.groundDynamicFriction = colliderSimAttribute.dynamicFriction;
+	}
+
+	if (CheckNumAttr("staticfriction", m, instance))
+	{
+		colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "staticfriction"), nullptr);
+		worldSimAttribute.groundStaticFriction = colliderSimAttribute.staticFriction;
 	}
 
 	if (CheckNumAttr("clothfriction", m, instance))
 	{
 		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "clothfriction"), nullptr);
-		clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
+	}
+
+	if (CheckNumAttr("clothstaticfriction", m, instance))
+	{
+		clothSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "clothstaticfriction"), nullptr);
 	}
 
 	if (CheckNumAttr("gap", m, instance))
@@ -396,6 +406,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		worldSimAttribute.gravity.x = m->opt.gravity[0];
 		worldSimAttribute.gravity.y = m->opt.gravity[2];
 		worldSimAttribute.gravity.z = -m->opt.gravity[1];
+		if (worldSimAttribute.groundStaticFriction < worldSimAttribute.groundDynamicFriction)
+			worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
 		std::vector<SrVec3f>	pos(m->nflexvert);
@@ -421,6 +433,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.positions = pos.data();
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
+		if (clothSimAttribute.staticFriction < clothSimAttribute.dynamicFriction)
+			clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
 
 		if (pinVerts.size() > 0)
@@ -487,7 +501,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			colliderMeshDesc.positions = postions.data();
 			colliderMeshDesc.triangles = triangles.data();
 			simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
-			
+			if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
+				colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
 			SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
 			SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
 		}
@@ -566,7 +581,7 @@ void Style3DSim::RegisterPlugin() {
 
   const char* attributes[] = {"face", "edge", 
 							  "stretch", "bend", "thickness", "density", "pressure", "solidifystiff","pin",
-							  "friction", "clothfriction", "gap", "convex", "selfcollide", "keepwrinkles",
+							  "staticfriction", "friction", "clothstaticfriction", "clothfriction", "gap", "convex", "selfcollide", "keepwrinkles",
 							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
