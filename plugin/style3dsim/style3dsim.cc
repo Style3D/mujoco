@@ -55,6 +55,29 @@ void String2Vector(const std::string& txt, std::vector<T>& vec) {
 	}
 }
 
+bool IsEqual(const float& a, const float& b) {
+
+	return std::abs(a - b) < 1.0e-6;
+}
+
+bool IsEqual(const SrTransform& a, const SrTransform& b) {
+
+	if (!IsEqual(a.scale.x, b.scale.x)) return false;
+	if (!IsEqual(a.scale.y, b.scale.y)) return false;
+	if (!IsEqual(a.scale.z, b.scale.z)) return false;
+
+	if (!IsEqual(a.translation.x, b.translation.x)) return false;
+	if (!IsEqual(a.translation.y, b.translation.y)) return false;
+	if (!IsEqual(a.translation.z, b.translation.z)) return false;
+
+	if (!IsEqual(a.rotation.x, b.rotation.x)) return false;
+	if (!IsEqual(a.rotation.y, b.rotation.y)) return false;
+	if (!IsEqual(a.rotation.z, b.rotation.z)) return false;
+	if (!IsEqual(a.rotation.w, b.rotation.w)) return false;
+
+	return true;
+}
+
 }  // namespace
 
 Style3DSimHndManager::~Style3DSimHndManager() {
@@ -71,6 +94,7 @@ Style3DSimHndManager::~Style3DSimHndManager() {
 		SrMesh_Destroy(&hnd.second);
 	}
 	meshHnds.clear();
+	geoTransforms.clear();
 }
 
 // factory function
@@ -406,8 +430,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		worldSimAttribute.gravity.x = m->opt.gravity[0];
 		worldSimAttribute.gravity.y = m->opt.gravity[2];
 		worldSimAttribute.gravity.z = -m->opt.gravity[1];
-		if (worldSimAttribute.groundStaticFriction < worldSimAttribute.groundDynamicFriction)
-			worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
+		//if (worldSimAttribute.groundStaticFriction < worldSimAttribute.groundDynamicFriction)
+		//	worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
 		std::vector<SrVec3f>	pos(m->nflexvert);
@@ -433,8 +457,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.positions = pos.data();
 		meshDesc.triangles = clothFaces.data();
 		simHndManager->clothHnd = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
-		if (clothSimAttribute.staticFriction < clothSimAttribute.dynamicFriction)
-			clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
+		//if (clothSimAttribute.staticFriction < clothSimAttribute.dynamicFriction)
+		//	clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
 		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
 
 		if (pinVerts.size() > 0)
@@ -478,6 +502,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			transform.translation.y = +pos[2];
 			transform.translation.z = -pos[1];
 
+			simHndManager->geoTransforms[g] = transform;
+
 			const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
 			size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
 			const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
@@ -501,8 +527,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			colliderMeshDesc.positions = postions.data();
 			colliderMeshDesc.triangles = triangles.data();
 			simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
-			if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
-				colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
+			//if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
+			//	colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
 			SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
 			SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
 		}
@@ -527,6 +553,10 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			transform.translation.y = +pos[2];
 			transform.translation.z = -pos[1];
 
+			if (IsEqual(simHndManager->geoTransforms[g], transform))
+				continue;
+			simHndManager->geoTransforms[g] = transform;
+
 			const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
 			size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
 			//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
@@ -543,16 +573,19 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 		// set cloth positions for pin verts
 		int numPin = pinVerts.size();
-		std::vector<SrVec3f>	pos(numPin);
-		for (int i = 0; i < numPin; i++)
-		{
-			int v = pinVerts[i];
-			pos[i].x = m->flex_vert[3 * v + 0];
-			pos[i].y = m->flex_vert[3 * v + 2];
-			pos[i].z = -m->flex_vert[3 * v + 1];
-		}
 		if (numPin > 0)
+		{
+			std::vector<SrVec3f>	pos(numPin);
+			for (int i = 0; i < numPin; i++)
+			{
+				int v = pinVerts[i];
+				pos[i].x = m->flex_vert[3 * v + 0];
+				pos[i].y = m->flex_vert[3 * v + 2];
+				pos[i].z = -m->flex_vert[3 * v + 1];
+			}
+
 			SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
+		}
 	}
 
 	for (int s = 0; s < substep; ++s)
@@ -561,7 +594,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 	if (isCaptured && frameIndex > 3) // trick, skip  first 3 frame, because mj do step when compile model
 	{
 		const SrVec3f* pos = SrCloth_GetVertPositions(simHndManager->clothHnd);
-		for (int i = 0; i < m->nflexvert - 1; i++)// trick, last vert is ghost
+		for (int i = 0; i < m->nflexvert - 1; ++i)// trick, last vert is ghost
 		{
 			m->flex_vert[3 * i + 0] = pos[i].x;
 			m->flex_vert[3 * i + 2] = pos[i].y;

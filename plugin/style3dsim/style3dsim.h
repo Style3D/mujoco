@@ -45,6 +45,7 @@ public:
 	SrClothHnd clothHnd = nullptr;
 	std::vector<SrMeshColliderHnd> colliderHnds;
 	std::map<int, SrMeshHnd> meshHnds;
+	std::map<int, SrTransform> geoTransforms;
 };
 
 
