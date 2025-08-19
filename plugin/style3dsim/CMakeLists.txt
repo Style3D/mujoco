@@ -60,9 +60,11 @@ target_link_libraries(${TARGET_NAME} PUBLIC Style3DSimulator)
 
 # install lib
 function(custom_install lib_path dest)
-	install(FILES ${lib_path} DESTINATION ${dest})
-	add_custom_command(TARGET ${TARGET_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			${lib_path} $<TARGET_FILE_DIR:${TARGET_NAME}>)
+	if(EXISTS ${lib_path})
+		install(FILES ${lib_path} DESTINATION ${dest})
+		add_custom_command(TARGET ${TARGET_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				${lib_path} $<TARGET_FILE_DIR:${TARGET_NAME}>)
+	endif()
 endfunction()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
