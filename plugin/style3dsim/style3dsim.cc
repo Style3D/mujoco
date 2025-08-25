@@ -101,17 +101,7 @@ Style3DSimHndManager::~Style3DSimHndManager() {
 std::optional<Style3DSim> Style3DSim::Create(
   const mjModel* m, mjData* d, int instance) {
 
-	if (CheckNumAttr("face", m, instance))
-	{
-		std::vector<int> face;
-		String2Vector(mj_getPluginConfig(m, instance, "face"), face);
-		return Style3DSim(m, d, instance, face);
-	}
-	else
-	{
-		mju_warning("Invalid parameter specification in shell plugin");
-		return std::nullopt;
-	}
+	return Style3DSim(m, d, instance);
 }
 
 void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
@@ -191,7 +181,7 @@ void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
 }
 
 // plugin constructor
-Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vector<int>& face) {
+Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
 
 	//if (CheckNumAttr("stretch", m, instance))
 	{
@@ -364,9 +354,6 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance, const std::vec
 			pwd = config;
 	}
 
-	clothFaces.resize(face.size() / 3);
-	std::memcpy(clothFaces.data(), face.data(), sizeof(int) * face.size());
-
 	simHndManager = std::make_shared<Style3DSimHndManager>();
 }
 
@@ -434,12 +421,10 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		//	worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
+		// create cloth verts
 		std::vector<SrVec3f>	pos(m->nflexvert);
 		std::vector<SrVec2f>	materialCoords(m->nflexvert);
 		std::vector<char>	isPinned(pinVerts.size(), 1);
-
-
-
 		for (int i = 0; i < m->nflexvert; i++)
 		{
 			pos[i].x = d->flexvert_xpos[3 * i + 0];
@@ -448,6 +433,15 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 			materialCoords[i].x = pos[i].x;
 			materialCoords[i].y = pos[i].z;
+		}
+
+		// create cloth faces, we only consider cloth type for now
+		std::vector<SrVec3i> clothFaces(m->nflexelem);
+		for (int i = 0; i < m->nflexelem; ++i)
+		{
+			clothFaces[i].x = m->flex_elem[3 * i];
+			clothFaces[i].y = m->flex_elem[3 * i + 1];
+			clothFaces[i].z = m->flex_elem[3 * i + 2];
 		}
 
 		//create cloth
