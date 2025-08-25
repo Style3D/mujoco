@@ -64,13 +64,12 @@ class Style3DSim {
 
  private:
 
-  Style3DSim(const mjModel* m, mjData* d, int instance, const std::vector<int>& face);
+  Style3DSim(const mjModel* m, mjData* d, int instance);
 
   void CreateStaticMeshes(const mjModel* m, mjData* d);
 
  private:
 
-  std::vector<SrVec3i> clothFaces;
   std::vector<SrVec2i> geoMeshIndexPair;
   int frameIndex = 0;
   int substep = 1;
