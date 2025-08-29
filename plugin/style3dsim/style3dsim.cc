@@ -88,6 +88,10 @@ Style3DSimHndManager::~Style3DSimHndManager() {
 	{
 		SrMeshCollider_Destroy(&hnd);
 	}
+	for (auto& hnd : rigidHnds)
+	{
+		SrRigidBody_Destroy(&hnd);
+	}
 	colliderHnds.clear();
 	for (auto& hnd : meshHnds)
 	{
@@ -294,6 +298,15 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
 	}
 
 	{
+		const char* config = mj_getPluginConfig(m, instance, "rigidcollider");
+		if (config)
+		{
+			std::string tmp = config;
+			useRigidCollider = tmp == "true";
+		}
+	}
+
+	{
 		const char* config = mj_getPluginConfig(m, instance, "selfcollide");
 		if (config)
 		{
@@ -477,92 +490,156 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		CreateStaticMeshes(m, d);
 
 		// create collider
-		simHndManager->colliderHnds.resize(geoMeshIndexPair.size());
-		for (int i = 0; i < geoMeshIndexPair.size(); i++)
+		if (useRigidCollider)
 		{
-			int g = geoMeshIndexPair[i].x;
-			int meshid = geoMeshIndexPair[i].y;
-			const mjtNum* mat = d->geom_xmat + 9 * g;
-			const mjtNum* pos = d->geom_xpos + 3 * g;
-			// convert transform coordinate
-			float rotMat[9]; 
-			rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-			rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-			rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-			SrTransform transform;
-			transform.rotation = SrQuat_Create(rotMat);
-			transform.scale = SrVec3f{1.0f, 1.0f, 1.0f};
-			transform.translation.x = +pos[0];
-			transform.translation.y = +pos[2];
-			transform.translation.z = -pos[1];
-
-			simHndManager->geoTransforms[g] = transform;
-
-			const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
-			size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
-			const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-			size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
-
-			std::vector<SrVec3f> postions(vertNum);
-			for (size_t vId = 0; vId < postions.size(); vId++)
+			simHndManager->rigidHnds.resize(geoMeshIndexPair.size());
+			for (int i = 0; i < geoMeshIndexPair.size(); i++)
 			{
-				postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
-			}
-			std::vector<SrVec3i> triangles(faceNum);
-			for (size_t tId = 0; tId < faceNum; tId++)
-			{
-				triangles[tId] = faces[tId];
-			}
+				int g = geoMeshIndexPair[i].x;
+				int meshid = geoMeshIndexPair[i].y;
+				const mjtNum* mat = d->geom_xmat + 9 * g;
+				const mjtNum* pos = d->geom_xpos + 3 * g;
+				// convert transform coordinate
+				float rotMat[9];
+				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+				SrTransform transform;
+				transform.rotation = SrQuat_Create(rotMat);
+				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+				transform.translation.x = +pos[0];
+				transform.translation.y = +pos[2];
+				transform.translation.z = -pos[1];
 
-			// create mesh collider
-			SrMeshDesc colliderMeshDesc;
-			colliderMeshDesc.numVertices = postions.size();
-			colliderMeshDesc.numTriangles = faceNum;
-			colliderMeshDesc.positions = postions.data();
-			colliderMeshDesc.triangles = triangles.data();
-			simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
-			//if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
-			//	colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
-			SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
-			SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
+				simHndManager->geoTransforms[g] = transform;
+
+				simHndManager->rigidHnds[i] = SrRigidBody_Create(simHndManager->meshHnds[meshid], &transform);
+				SrRigidBodySimAttribute rigidBodySimAttribute;
+				rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction;
+				rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction;
+				SrRigidBody_SetAttribute(simHndManager->rigidHnds[i], &rigidBodySimAttribute);
+				SrRigidBody_SetPinFlag(simHndManager->rigidHnds[i], true);
+				SrRigidBody_Attach(simHndManager->rigidHnds[i], simHndManager->worldHnd);
+			}
+		}
+		else
+		{
+			simHndManager->colliderHnds.resize(geoMeshIndexPair.size());
+			for (int i = 0; i < geoMeshIndexPair.size(); i++)
+			{
+				int g = geoMeshIndexPair[i].x;
+				int meshid = geoMeshIndexPair[i].y;
+				const mjtNum* mat = d->geom_xmat + 9 * g;
+				const mjtNum* pos = d->geom_xpos + 3 * g;
+				// convert transform coordinate
+				float rotMat[9];
+				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+				SrTransform transform;
+				transform.rotation = SrQuat_Create(rotMat);
+				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+				transform.translation.x = +pos[0];
+				transform.translation.y = +pos[2];
+				transform.translation.z = -pos[1];
+
+				simHndManager->geoTransforms[g] = transform;
+
+				const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
+				size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
+				const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
+				size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
+
+				std::vector<SrVec3f> postions(vertNum);
+				for (size_t vId = 0; vId < postions.size(); vId++)
+				{
+					postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
+				}
+				std::vector<SrVec3i> triangles(faceNum);
+				for (size_t tId = 0; tId < faceNum; tId++)
+				{
+					triangles[tId] = faces[tId];
+				}
+
+				// create mesh collider
+				SrMeshDesc colliderMeshDesc;
+				colliderMeshDesc.numVertices = postions.size();
+				colliderMeshDesc.numTriangles = faceNum;
+				colliderMeshDesc.positions = postions.data();
+				colliderMeshDesc.triangles = triangles.data();
+				simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
+				//if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
+				//	colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
+				SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
+				SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
+			}
 		}
 	}
 	else
 	{
-		for (int i = 0; i < geoMeshIndexPair.size(); i++)
+		if (useRigidCollider)
 		{
-			int g = geoMeshIndexPair[i].x;
-			int meshid = geoMeshIndexPair[i].y;
-			const mjtNum* mat = d->geom_xmat + 9 * g;
-			const mjtNum* pos = d->geom_xpos + 3 * g;
-			// convert transform coordinate
-			float rotMat[9];
-			rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-			rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-			rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-			SrTransform transform;
-			transform.rotation = SrQuat_Create(rotMat);
-			transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
-			transform.translation.x = +pos[0];
-			transform.translation.y = +pos[2];
-			transform.translation.z = -pos[1];
-
-			if (IsEqual(simHndManager->geoTransforms[g], transform))
-				continue;
-			simHndManager->geoTransforms[g] = transform;
-
-			const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
-			size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
-			//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-			//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
-
-			std::vector<SrVec3f> postions(vertNum);
-			for (size_t vId = 0; vId < postions.size(); vId++)
+			for (int i = 0; i < geoMeshIndexPair.size(); i++)
 			{
-				postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
-			}
+				int g = geoMeshIndexPair[i].x;
+				int meshid = geoMeshIndexPair[i].y;
+				const mjtNum* mat = d->geom_xmat + 9 * g;
+				const mjtNum* pos = d->geom_xpos + 3 * g;
+				// convert transform coordinate
+				float rotMat[9];
+				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+				SrTransform transform;
+				transform.rotation = SrQuat_Create(rotMat);
+				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+				transform.translation.x = +pos[0];
+				transform.translation.y = +pos[2];
+				transform.translation.z = -pos[1];
 
-			SrMeshCollider_MoveVerts(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
+				if (IsEqual(simHndManager->geoTransforms[g], transform))
+					continue;
+				simHndManager->geoTransforms[g] = transform;
+				SrRigidBody_Move(simHndManager->rigidHnds[i], nullptr, &transform);
+			}
+		}
+		else
+		{
+			for (int i = 0; i < geoMeshIndexPair.size(); i++)
+			{
+				int g = geoMeshIndexPair[i].x;
+				int meshid = geoMeshIndexPair[i].y;
+				const mjtNum* mat = d->geom_xmat + 9 * g;
+				const mjtNum* pos = d->geom_xpos + 3 * g;
+				// convert transform coordinate
+				float rotMat[9];
+				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+				SrTransform transform;
+				transform.rotation = SrQuat_Create(rotMat);
+				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+				transform.translation.x = +pos[0];
+				transform.translation.y = +pos[2];
+				transform.translation.z = -pos[1];
+
+				if (IsEqual(simHndManager->geoTransforms[g], transform))
+					continue;
+				simHndManager->geoTransforms[g] = transform;
+
+				const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
+				size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
+				//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
+				//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
+
+				std::vector<SrVec3f> postions(vertNum);
+				for (size_t vId = 0; vId < postions.size(); vId++)
+				{
+					postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
+				}
+
+				SrMeshCollider_MoveVerts(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
+			}
 		}
 
 		// set cloth positions for pin verts
@@ -608,7 +685,7 @@ void Style3DSim::RegisterPlugin() {
 
   const char* attributes[] = {"face", "edge", 
 							  "stretch", "bend", "thickness", "density", "pressure", "solidifystiff","pin",
-							  "staticfriction", "friction", "clothstaticfriction", "clothfriction", "gap", "convex", "selfcollide", "keepwrinkles",
+							  "staticfriction", "friction", "clothstaticfriction", "clothfriction", "gap", "convex", "rigidcollider", "selfcollide", "keepwrinkles",
 							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);

@@ -44,6 +44,7 @@ public:
 	SrWorldHnd worldHnd = nullptr;
 	SrClothHnd clothHnd = nullptr;
 	std::vector<SrMeshColliderHnd> colliderHnds;
+	std::vector<SrRigidBodyHnd> rigidHnds;
 	std::map<int, SrMeshHnd> meshHnds;
 	std::map<int, SrTransform> geoTransforms;
 };
@@ -73,6 +74,7 @@ class Style3DSim {
   std::vector<SrVec2i> geoMeshIndexPair;
   int frameIndex = 0;
   int substep = 1;
+  bool useRigidCollider = false;
   bool useConvexHull = false;
   bool keepWrinkles = false;
   double solidifyStiff = 0.0;
