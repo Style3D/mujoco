@@ -432,6 +432,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		worldSimAttribute.gravity.z = -m->opt.gravity[1];
 		//if (worldSimAttribute.groundStaticFriction < worldSimAttribute.groundDynamicFriction)
 		//	worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
+		worldSimAttribute.enableRigidSelfCollision = false;
 		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
 
 		// create cloth verts
@@ -599,8 +600,8 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 				if (IsEqual(simHndManager->geoTransforms[g], transform))
 					continue;
+				SrRigidBody_Move(simHndManager->rigidHnds[i], &simHndManager->geoTransforms[g], &transform);
 				simHndManager->geoTransforms[g] = transform;
-				SrRigidBody_Move(simHndManager->rigidHnds[i], nullptr, &transform);
 			}
 		}
 		else
