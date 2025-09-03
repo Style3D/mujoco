@@ -583,7 +583,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			for (int i = 0; i < geoMeshIndexPair.size(); i++)
 			{
 				int g = geoMeshIndexPair[i].x;
-				int meshid = geoMeshIndexPair[i].y;
 				const mjtNum* mat = d->geom_xmat + 9 * g;
 				const mjtNum* pos = d->geom_xpos + 3 * g;
 				// convert transform coordinate
