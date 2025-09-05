@@ -264,13 +264,21 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
 	if (CheckNumAttr("friction", m, instance))
 	{
 		colliderSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
-		worldSimAttribute.groundDynamicFriction = colliderSimAttribute.dynamicFriction;
 	}
 
 	if (CheckNumAttr("staticfriction", m, instance))
 	{
 		colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "staticfriction"), nullptr);
-		worldSimAttribute.groundStaticFriction = colliderSimAttribute.staticFriction;
+	}
+
+	if (CheckNumAttr("groundfriction", m, instance))
+	{
+		worldSimAttribute.groundDynamicFriction = strtod(mj_getPluginConfig(m, instance, "groundfriction"), nullptr);
+	}
+
+	if (CheckNumAttr("groundstaticfriction", m, instance))
+	{
+		worldSimAttribute.groundStaticFriction = strtod(mj_getPluginConfig(m, instance, "groundstaticfriction"), nullptr);
 	}
 
 	if (CheckNumAttr("clothfriction", m, instance))
@@ -685,7 +693,8 @@ void Style3DSim::RegisterPlugin() {
 
   const char* attributes[] = {"face", "edge", 
 							  "stretch", "bend", "thickness", "density", "pressure", "solidifystiff","pin",
-							  "staticfriction", "friction", "clothstaticfriction", "clothfriction", "gap", "convex", "rigidcollider", "selfcollide", "keepwrinkles",
+							  "staticfriction", "friction", "groundstaticfriction", "groundfriction", "clothstaticfriction", "clothfriction", 
+							  "gap", "convex", "rigidcollider", "selfcollide", "keepwrinkles",
 							  "airdamping", "stretchdamping", "benddamping", "velsmoothing", "groundheight", "gpu", "substep",
 							  "user", "pwd"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
