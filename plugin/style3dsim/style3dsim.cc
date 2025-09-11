@@ -80,26 +80,6 @@ bool IsEqual(const SrTransform& a, const SrTransform& b) {
 
 }  // namespace
 
-Style3DSimHndManager::~Style3DSimHndManager() {
-
-	SrWorld_Destroy(&worldHnd);
-	SrCloth_Destroy(&clothHnd);
-	for (auto& hnd : colliderHnds)
-	{
-		SrMeshCollider_Destroy(&hnd);
-	}
-	for (auto& hnd : rigidHnds)
-	{
-		SrRigidBody_Destroy(&hnd);
-	}
-	colliderHnds.clear();
-	for (auto& hnd : meshHnds)
-	{
-		SrMesh_Destroy(&hnd.second);
-	}
-	meshHnds.clear();
-	geoTransforms.clear();
-}
 
 // factory function
 std::optional<Style3DSim> Style3DSim::Create(
@@ -108,84 +88,122 @@ std::optional<Style3DSim> Style3DSim::Create(
 	return Style3DSim(m, d, instance);
 }
 
-void Style3DSim::CreateStaticMeshes(const mjModel* m, mjData* d)
-{
-	geoMeshIndexPair.reserve(m->ngeom);
-	for (int i = 0; i < m->ngeom; ++i)
-	{
-		int meshid = m->geom_dataid[i];
-		if (meshid < 0) continue;
-
-		if (useConvexHull)
-		{
-			if (m->geom_type[i] != mjGEOM_MESH) continue;
-			if (m->mesh_graphadr[meshid] < 0) continue;
-			if (!m->geom_contype[i] && !m->geom_conaffinity[i]) continue;
-		}
-
-		geoMeshIndexPair.push_back(SrVec2i{ i, meshid });
-		if (simHndManager->meshHnds.find(meshid) != simHndManager->meshHnds.end()) continue;
-
-		std::vector<SrVec3f>		verts;
-		std::vector<SrVec3i>		faces;
-
-		if (useConvexHull)
-		{
-			int vertadr = m->mesh_vertadr[meshid];
-			//int numMeshVert = m->mesh_vertnum[meshid];
-			// get sizes of convex hull
-			int numConvexHullVert = m->mesh_graph[m->mesh_graphadr[meshid]];
-			int numConvexHullFace = m->mesh_graph[m->mesh_graphadr[meshid] + 1];
-			faces.resize(numConvexHullFace);
-			int* vert_globalid = m->mesh_graph + m->mesh_graphadr[meshid] + 2 + numConvexHullVert;
-			int* pFaces = m->mesh_graph + m->mesh_graphadr[meshid] + 2 + 3 * numConvexHullVert + 3 * numConvexHullFace;
-			float* pVerts = m->mesh_vert + 3 * vertadr;
-
-			std::unordered_map<int, int> vertIdxMap;
-			verts.reserve(numConvexHullVert);
-
-			// rebuild vert index
-			for (int i = 0; i < numConvexHullVert; ++i) {
-				int vertIdx = vert_globalid[i];
-				vertIdxMap[vertIdx] = i;
-				verts.emplace_back(SrVec3f{pVerts[3 * vertIdx], pVerts[3 * vertIdx + 2], -pVerts[3 * vertIdx + 1]});
-			}
-
-			for (int i = 0; i < faces.size(); i++)
-			{
-				faces[i] = SrVec3i{vertIdxMap[pFaces[3 * i]], vertIdxMap[pFaces[3 * i + 1]], vertIdxMap[pFaces[3 * i + 2]]};
-			}
-		}
-		else
-		{
-			int* pFaces = m->mesh_face + 3 * m->mesh_faceadr[meshid];
-			float* pVerts = m->mesh_vert + 3 * m->mesh_vertadr[meshid];
-
-			verts.resize(m->mesh_vertnum[meshid]);
-			faces.resize(m->mesh_facenum[meshid]);
-
-			for (int i = 0; i < verts.size(); i++)
-			{
-				verts[i] = SrVec3f{pVerts[3 * i], pVerts[3 * i + 2], -pVerts[3 * i + 1]};
-			}
-			for (int i = 0; i < faces.size(); i++)
-			{
-				faces[i] = SrVec3i{pFaces[3 * i], pFaces[3 * i + 1], pFaces[3 * i + 2]};
-			}
-		}
-
-		SrMeshDesc meshDesc;
-		meshDesc.numVertices = verts.size();
-		meshDesc.numTriangles = faces.size();
-		meshDesc.positions = reinterpret_cast<SrVec3f*>(verts.data());
-		meshDesc.triangles = reinterpret_cast<SrVec3i*>(faces.data());
-		simHndManager->meshHnds[meshid] = SrMesh_Create(&meshDesc);
-	}
-	geoMeshIndexPair.shrink_to_fit();
-}
-
 // plugin constructor
 Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
+
+	InitFlexIdx(m, d, instance);
+
+	//~ global settings
+
+	// collider friction
+	if (CheckNumAttr("friction", m, instance))
+	{
+		colliderSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
+	}
+
+	if (CheckNumAttr("staticfriction", m, instance))
+	{
+		colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "staticfriction"), nullptr);
+	}
+
+	// collider gap
+	if (CheckNumAttr("gap", m, instance))
+	{
+		colliderSimAttribute.CollisionGap = strtod(mj_getPluginConfig(m, instance, "gap"), nullptr) * 1.0e-3;
+	}
+
+	// ground friction
+	if (CheckNumAttr("groundfriction", m, instance))
+	{
+		worldSimAttribute.groundDynamicFriction = strtod(mj_getPluginConfig(m, instance, "groundfriction"), nullptr);
+	}
+
+	if (CheckNumAttr("groundstaticfriction", m, instance))
+	{
+		worldSimAttribute.groundStaticFriction = strtod(mj_getPluginConfig(m, instance, "groundstaticfriction"), nullptr);
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "convex");
+		if (config)
+		{
+			std::string tmp = config;
+			useConvexHull = tmp == "true";
+		}
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "rigidcollider");
+		if (config)
+		{
+			std::string tmp = config;
+			useRigidCollider = tmp == "true";
+		}
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "selfcollide");
+		if (config)
+		{
+			std::string tmp = config;
+			worldSimAttribute.enableSelfCollision = worldSimAttribute.enableUntangle = tmp == "true";
+		}
+	}
+
+	if (CheckNumAttr("airdamping", m, instance))
+	{
+		worldSimAttribute.airDamping = strtod(mj_getPluginConfig(m, instance, "airdamping"), nullptr);
+	}
+
+	if (CheckNumAttr("stretchdamping", m, instance))
+	{
+		worldSimAttribute.stretchDamping = strtod(mj_getPluginConfig(m, instance, "stretchdamping"), nullptr);
+	}
+
+	if (CheckNumAttr("benddamping", m, instance))
+	{
+		worldSimAttribute.bendDamping = strtod(mj_getPluginConfig(m, instance, "benddamping"), nullptr);
+	}
+
+	if (CheckNumAttr("velsmoothing", m, instance))
+	{
+		worldSimAttribute.velSmoothing = strtod(mj_getPluginConfig(m, instance, "velsmoothing"), nullptr);
+	}
+
+	if (CheckNumAttr("groundheight", m, instance))
+	{
+		worldSimAttribute.groundHeight = strtod(mj_getPluginConfig(m, instance, "groundheight"), nullptr) * 1.0e-3;
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "gpu");
+		if (config)
+		{
+			std::string tmp = config;
+			worldSimAttribute.enableGPU = tmp == "true";
+		}
+	}
+
+	if (CheckNumAttr("substep", m, instance))
+	{
+		substep = strtod(mj_getPluginConfig(m, instance, "substep"), nullptr);
+		substep = std::max(1, substep);
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "user");
+		if (config)
+			usr = config;
+	}
+
+	{
+		const char* config = mj_getPluginConfig(m, instance, "pwd");
+		if (config)
+			pwd = config;
+	}
+
+
+	//~ cloth settings
 
 	//if (CheckNumAttr("stretch", m, instance))
 	{
@@ -261,26 +279,6 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
 		}
 	}
 
-	if (CheckNumAttr("friction", m, instance))
-	{
-		colliderSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "friction"), nullptr);
-	}
-
-	if (CheckNumAttr("staticfriction", m, instance))
-	{
-		colliderSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "staticfriction"), nullptr);
-	}
-
-	if (CheckNumAttr("groundfriction", m, instance))
-	{
-		worldSimAttribute.groundDynamicFriction = strtod(mj_getPluginConfig(m, instance, "groundfriction"), nullptr);
-	}
-
-	if (CheckNumAttr("groundstaticfriction", m, instance))
-	{
-		worldSimAttribute.groundStaticFriction = strtod(mj_getPluginConfig(m, instance, "groundstaticfriction"), nullptr);
-	}
-
 	if (CheckNumAttr("clothfriction", m, instance))
 	{
 		clothSimAttribute.dynamicFriction = strtod(mj_getPluginConfig(m, instance, "clothfriction"), nullptr);
@@ -290,95 +288,114 @@ Style3DSim::Style3DSim(const mjModel* m, mjData* d, int instance) {
 	{
 		clothSimAttribute.staticFriction = strtod(mj_getPluginConfig(m, instance, "clothstaticfriction"), nullptr);
 	}
-
-	if (CheckNumAttr("gap", m, instance))
-	{
-		colliderSimAttribute.CollisionGap = strtod(mj_getPluginConfig(m, instance, "gap"), nullptr) * 1.0e-3;
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "convex");
-		if (config)
-		{
-			std::string tmp = config;
-			useConvexHull = tmp == "true";
-		}
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "rigidcollider");
-		if (config)
-		{
-			std::string tmp = config;
-			useRigidCollider = tmp == "true";
-		}
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "selfcollide");
-		if (config)
-		{
-			std::string tmp = config;
-			worldSimAttribute.enableSelfCollision = worldSimAttribute.enableUntangle = tmp == "true";
-		}
-	}
-
-	if (CheckNumAttr("airdamping", m, instance))
-	{
-		worldSimAttribute.airDamping = strtod(mj_getPluginConfig(m, instance, "airdamping"), nullptr);
-	}
-
-	if (CheckNumAttr("stretchdamping", m, instance))
-	{
-		worldSimAttribute.stretchDamping = strtod(mj_getPluginConfig(m, instance, "stretchdamping"), nullptr);
-	}
-
-	if (CheckNumAttr("benddamping", m, instance))
-	{
-		worldSimAttribute.bendDamping = strtod(mj_getPluginConfig(m, instance, "benddamping"), nullptr);
-	}
-
-	if (CheckNumAttr("velsmoothing", m, instance))
-	{
-		worldSimAttribute.velSmoothing = strtod(mj_getPluginConfig(m, instance, "velsmoothing"), nullptr);
-	}
-
-	if (CheckNumAttr("groundheight", m, instance))
-	{
-		worldSimAttribute.groundHeight = strtod(mj_getPluginConfig(m, instance, "groundheight"), nullptr) * 1.0e-3;
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "gpu");
-		if (config)
-		{ 
-			std::string tmp = config;
-			worldSimAttribute.enableGPU = tmp == "true";
-		}
-	}
-
-	if (CheckNumAttr("substep", m, instance))
-	{
-		substep = strtod(mj_getPluginConfig(m, instance, "substep"), nullptr);
-		substep = std::max(1, substep);
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "user");
-		if (config)
-			usr = config;
-	}
-
-	{
-		const char* config = mj_getPluginConfig(m, instance, "pwd");
-		if (config)
-			pwd = config;
-	}
-
-	simHndManager = std::make_shared<Style3DSimHndManager>();
 }
 
-Style3DSim::~Style3DSim() {
+Style3DSim::~Style3DSim() {}
+
+void Style3DSim::CreateS3dMeshes(const mjModel* m, mjData* d)
+{
+	auto& geoMeshIndexPair = Style3DSimHndManager::GetSingleton().geoMeshIndexPair;
+	geoMeshIndexPair.reserve(m->ngeom);
+	auto& meshHnds = Style3DSimHndManager::GetSingleton().meshHnds;
+	for (int i = 0; i < m->ngeom; ++i)
+	{
+		int meshid = m->geom_dataid[i];
+		if (meshid < 0) continue;
+
+		if (useConvexHull)
+		{
+			if (m->geom_type[i] != mjGEOM_MESH) continue;
+			if (m->mesh_graphadr[meshid] < 0) continue;
+			if (!m->geom_contype[i] && !m->geom_conaffinity[i]) continue;
+		}
+
+		geoMeshIndexPair.push_back(SrVec2i{ i, meshid });
+		if (meshHnds.find(meshid) != meshHnds.end()) continue;
+
+		std::vector<SrVec3f>		verts;
+		std::vector<SrVec3i>		faces;
+
+		if (useConvexHull)
+		{
+			int vertadr = m->mesh_vertadr[meshid];
+			//int numMeshVert = m->mesh_vertnum[meshid];
+			// get sizes of convex hull
+			int numConvexHullVert = m->mesh_graph[m->mesh_graphadr[meshid]];
+			int numConvexHullFace = m->mesh_graph[m->mesh_graphadr[meshid] + 1];
+			faces.resize(numConvexHullFace);
+			int* vert_globalid = m->mesh_graph + m->mesh_graphadr[meshid] + 2 + numConvexHullVert;
+			int* pFaces = m->mesh_graph + m->mesh_graphadr[meshid] + 2 + 3 * numConvexHullVert + 3 * numConvexHullFace;
+			float* pVerts = m->mesh_vert + 3 * vertadr;
+
+			std::unordered_map<int, int> vertIdxMap;
+			verts.reserve(numConvexHullVert);
+
+			// rebuild vert index
+			for (int i = 0; i < numConvexHullVert; ++i) {
+				int vertIdx = vert_globalid[i];
+				vertIdxMap[vertIdx] = i;
+				verts.emplace_back(SrVec3f{ pVerts[3 * vertIdx], pVerts[3 * vertIdx + 2], -pVerts[3 * vertIdx + 1] });
+			}
+
+			for (int i = 0; i < faces.size(); i++)
+			{
+				faces[i] = SrVec3i{ vertIdxMap[pFaces[3 * i]], vertIdxMap[pFaces[3 * i + 1]], vertIdxMap[pFaces[3 * i + 2]] };
+			}
+		}
+		else
+		{
+			int* pFaces = m->mesh_face + 3 * m->mesh_faceadr[meshid];
+			float* pVerts = m->mesh_vert + 3 * m->mesh_vertadr[meshid];
+
+			verts.resize(m->mesh_vertnum[meshid]);
+			faces.resize(m->mesh_facenum[meshid]);
+
+			for (int i = 0; i < verts.size(); i++)
+			{
+				verts[i] = SrVec3f{ pVerts[3 * i], pVerts[3 * i + 2], -pVerts[3 * i + 1] };
+			}
+			for (int i = 0; i < faces.size(); i++)
+			{
+				faces[i] = SrVec3i{ pFaces[3 * i], pFaces[3 * i + 1], pFaces[3 * i + 2] };
+			}
+		}
+
+		SrMeshDesc meshDesc;
+		meshDesc.numVertices = verts.size();
+		meshDesc.numTriangles = faces.size();
+		meshDesc.positions = reinterpret_cast<SrVec3f*>(verts.data());
+		meshDesc.triangles = reinterpret_cast<SrVec3i*>(faces.data());
+		meshHnds[meshid] = SrMesh_Create(&meshDesc);
+	}
+	geoMeshIndexPair.shrink_to_fit();
+}
+
+void Style3DSim::InitFlexIdx(const mjModel* m, mjData* d, int instance)
+{
+	int bodyId = -1;
+	for (int i = 1; i < m->nbody; i++) 
+	{
+		if (m->body_plugin[i] == instance) 
+		{
+			bodyId = i;
+			break;
+		}
+	}
+
+	flexIdx = -1;
+	for (int i = 0; i < m->nflex; i++)
+	{
+		int adr = m->flex_vertadr[i];
+		int num = m->flex_vertnum[i];
+		for (int k = 0; k < num; ++k)
+		{
+			if (m->flex_vertbodyid[adr + k] == bodyId)
+			{
+				flexIdx = i;
+				return;
+			}
+		}
+	}
 }
 
 void Style3DSim::Compute(const mjModel* m, mjData* d, int instance) {
@@ -388,82 +405,192 @@ void Style3DSim::Compute(const mjModel* m, mjData* d, int instance) {
 
 void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
-	if (frameIndex == 0)
+	if (flexIdx < 0)
 	{
-		// init sim
-		auto LoginCallback = [](bool bSucceed, const char* errorType, const char* message)
-			{
-				if (bSucceed)
-				{
-					printf("Succeed login.\n");
-				}
-				else
-				{
-					printf("Fail login, errorType: %s, message: %s.\n", errorType, message);
-				}
-			};
-		if (!SrIsLogin())
-			SrLogin(usr.c_str(), pwd.c_str(), true, LoginCallback);
+		mju_error("Flex id invalid.");
+		return;
+	}
+	int frameIndex = std::round(d->time / m->opt.timestep);
+	auto& simHndManager = Style3DSimHndManager::GetSingleton();
+	if (simHndManager.masterInstance == -1)
+	{
+		// this plugin instance is master
+		simHndManager.masterInstance = instance;
+	}
+	bool isMaster = simHndManager.masterInstance == instance;
 
-		// log callback
-		auto pfnSrLogCallback = [](const char* pFileName, const char* pFunName, int line, SrLogVerb eLogVerb, const char* pMsg)
-			{
-				if (eLogVerb == SrLogVerb::SrInfo)
-				{
-					printf("Info: %s\n", pMsg);
-				}
-				else if (eLogVerb == SrLogVerb::SrError)
-				{
-					printf("Error: %s\n", pMsg);
-				}
-				else if (eLogVerb == SrLogVerb::SrDebug)
-				{
-					printf("Debug: %s\n", pMsg);
-				}
-				else if (eLogVerb == SrLogVerb::SrAssert)
-				{
-					printf("Assert: %s\n", pMsg);
-				}
-				else if (eLogVerb == SrLogVerb::SrWarn)
-				{
-					printf("Warn: %s\n", pMsg);
-				}
-			};
-		SrSetLogCallback(pfnSrLogCallback);
+	int flexVertNum = m->flex_vertnum[flexIdx];
+	int flexVertAdr = m->flex_vertadr[flexIdx];
+	int flexElemNum = m->flex_elemnum[flexIdx];
+	int flexElemAdr = m->flex_elemadr[flexIdx];
 
-		simHndManager->worldHnd = SrWorld_Create();
-		
-		worldSimAttribute.timeStep = m->opt.timestep / substep;
-		worldSimAttribute.iterations = m->opt.iterations;
-		worldSimAttribute.gravity.x = m->opt.gravity[0];
-		worldSimAttribute.gravity.y = m->opt.gravity[2];
-		worldSimAttribute.gravity.z = -m->opt.gravity[1];
-		//if (worldSimAttribute.groundStaticFriction < worldSimAttribute.groundDynamicFriction)
-		//	worldSimAttribute.groundStaticFriction = worldSimAttribute.groundDynamicFriction;
-		worldSimAttribute.enableRigidSelfCollision = false;
-		SrWorld_SetAttribute(simHndManager->worldHnd, &worldSimAttribute);
+	if (frameIndex == 1) // init sim in first frame
+	{
+		if (isMaster)
+		{
+			// init sim world and collider
+			auto LoginCallback = [](bool bSucceed, const char* errorType, const char* message)
+				{
+					if (bSucceed)
+					{
+						printf("Succeed login.\n");
+					}
+					else
+					{
+						printf("Fail login, errorType: %s, message: %s.\n", errorType, message);
+					}
+				};
+			if (!SrIsLogin())
+				SrLogin(usr.c_str(), pwd.c_str(), true, LoginCallback);
+
+			// log callback
+			auto pfnSrLogCallback = [](const char* pFileName, const char* pFunName, int line, SrLogVerb eLogVerb, const char* pMsg)
+				{
+					if (eLogVerb == SrLogVerb::SrInfo)
+					{
+						printf("Info: %s\n", pMsg);
+					}
+					else if (eLogVerb == SrLogVerb::SrError)
+					{
+						printf("Error: %s\n", pMsg);
+					}
+					else if (eLogVerb == SrLogVerb::SrDebug)
+					{
+						printf("Debug: %s\n", pMsg);
+					}
+					else if (eLogVerb == SrLogVerb::SrAssert)
+					{
+						printf("Assert: %s\n", pMsg);
+					}
+					else if (eLogVerb == SrLogVerb::SrWarn)
+					{
+						printf("Warn: %s\n", pMsg);
+					}
+				};
+			SrSetLogCallback(pfnSrLogCallback);
+
+			// create world
+			simHndManager.Clear(); // clear sim hnds at first frame
+			simHndManager.masterInstance = instance; // Clear func erase masterInstance, so reset again
+			simHndManager.worldHnd = SrWorld_Create();
+			worldSimAttribute.timeStep = m->opt.timestep / substep;
+			worldSimAttribute.iterations = m->opt.iterations;
+			worldSimAttribute.gravity.x = m->opt.gravity[0];
+			worldSimAttribute.gravity.y = m->opt.gravity[2];
+			worldSimAttribute.gravity.z = -m->opt.gravity[1];
+			worldSimAttribute.enableRigidSelfCollision = false;
+			SrWorld_SetAttribute(simHndManager.worldHnd, &worldSimAttribute);
+
+			CreateS3dMeshes(m, d);
+
+			// create collider
+			if (useRigidCollider)
+			{
+				simHndManager.rigidHnds.resize(simHndManager.geoMeshIndexPair.size());
+				for (int i = 0; i < simHndManager.geoMeshIndexPair.size(); i++)
+				{
+					int g = simHndManager.geoMeshIndexPair[i].x;
+					int meshid = simHndManager.geoMeshIndexPair[i].y;
+					const mjtNum* mat = d->geom_xmat + 9 * g;
+					const mjtNum* pos = d->geom_xpos + 3 * g;
+					// convert transform coordinate
+					float rotMat[9];
+					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+					rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+					rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+					SrTransform transform;
+					transform.rotation = SrQuat_Create(rotMat);
+					transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+					transform.translation.x = +pos[0];
+					transform.translation.y = +pos[2];
+					transform.translation.z = -pos[1];
+
+					simHndManager.geoTransforms[g] = transform;
+
+					simHndManager.rigidHnds[i] = SrRigidBody_Create(simHndManager.meshHnds[meshid], &transform);
+					SrRigidBodySimAttribute rigidBodySimAttribute;
+					rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction;
+					rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction;
+					SrRigidBody_SetAttribute(simHndManager.rigidHnds[i], &rigidBodySimAttribute);
+					SrRigidBody_SetPinFlag(simHndManager.rigidHnds[i], true);
+					SrRigidBody_Attach(simHndManager.rigidHnds[i], simHndManager.worldHnd);
+				}
+			}
+			else
+			{
+				simHndManager.colliderHnds.resize(simHndManager.geoMeshIndexPair.size());
+				for (int i = 0; i < simHndManager.geoMeshIndexPair.size(); i++)
+				{
+					int g = simHndManager.geoMeshIndexPair[i].x;
+					int meshid = simHndManager.geoMeshIndexPair[i].y;
+					const mjtNum* mat = d->geom_xmat + 9 * g;
+					const mjtNum* pos = d->geom_xpos + 3 * g;
+					// convert transform coordinate
+					float rotMat[9];
+					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+					rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+					rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+					SrTransform transform;
+					transform.rotation = SrQuat_Create(rotMat);
+					transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+					transform.translation.x = +pos[0];
+					transform.translation.y = +pos[2];
+					transform.translation.z = -pos[1];
+
+					simHndManager.geoTransforms[g] = transform;
+
+					const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager.meshHnds[meshid]);
+					size_t vertNum = SrMesh_GetVertNumber(simHndManager.meshHnds[meshid]);
+					const SrVec3i* faces = SrMesh_GetTriangles(simHndManager.meshHnds[meshid]);
+					size_t faceNum = SrMesh_GetTriangleNumber(simHndManager.meshHnds[meshid]);
+
+					std::vector<SrVec3f> postions(vertNum);
+					for (size_t vId = 0; vId < postions.size(); vId++)
+					{
+						postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
+					}
+					std::vector<SrVec3i> triangles(faceNum);
+					for (size_t tId = 0; tId < faceNum; tId++)
+					{
+						triangles[tId] = faces[tId];
+					}
+
+					// create mesh collider
+					SrMeshDesc colliderMeshDesc;
+					colliderMeshDesc.numVertices = postions.size();
+					colliderMeshDesc.numTriangles = faceNum;
+					colliderMeshDesc.positions = postions.data();
+					colliderMeshDesc.triangles = triangles.data();
+					simHndManager.colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
+					SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &colliderSimAttribute);
+					SrMeshCollider_Attach(simHndManager.colliderHnds[i], simHndManager.worldHnd);
+				}
+			}
+		}
 
 		// create cloth verts
-		std::vector<SrVec3f>	pos(m->nflexvert);
-		std::vector<SrVec2f>	materialCoords(m->nflexvert);
+		std::vector<SrVec3f>	pos(flexVertNum);
+		std::vector<SrVec2f>	materialCoords(flexVertNum);
 		std::vector<char>	isPinned(pinVerts.size(), 1);
-		for (int i = 0; i < m->nflexvert; i++)
+		for (int i = 0; i < flexVertNum; ++i)
 		{
-			pos[i].x = d->flexvert_xpos[3 * i + 0];
-			pos[i].y = d->flexvert_xpos[3 * i + 2];
-			pos[i].z = -d->flexvert_xpos[3 * i + 1];
+			int vid = flexVertAdr + i;
+			pos[i].x = d->flexvert_xpos[3 * vid + 0];
+			pos[i].y = d->flexvert_xpos[3 * vid + 2];
+			pos[i].z = -d->flexvert_xpos[3 * vid + 1];
 
 			materialCoords[i].x = pos[i].x;
 			materialCoords[i].y = pos[i].z;
 		}
 
 		// create cloth faces, we only consider cloth type for now
-		std::vector<SrVec3i> clothFaces(m->nflexelem);
-		for (int i = 0; i < m->nflexelem; ++i)
+		std::vector<SrVec3i> clothFaces(flexElemNum);
+		for (int i = 0; i < flexElemNum; ++i)
 		{
-			clothFaces[i].x = m->flex_elem[3 * i];
-			clothFaces[i].y = m->flex_elem[3 * i + 1];
-			clothFaces[i].z = m->flex_elem[3 * i + 2];
+			int elemid = flexElemAdr + i;
+			clothFaces[i].x = m->flex_elem[3 * elemid];
+			clothFaces[i].y = m->flex_elem[3 * elemid + 1];
+			clothFaces[i].z = m->flex_elem[3 * elemid + 2];
 		}
 
 		//create cloth
@@ -472,14 +599,14 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		meshDesc.numTriangles = clothFaces.size();
 		meshDesc.positions = pos.data();
 		meshDesc.triangles = clothFaces.data();
-		simHndManager->clothHnd = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
+		simHndManager.clothHnds[flexIdx] = SrCloth_Create(&meshDesc, nullptr, keepWrinkles);
 		//if (clothSimAttribute.staticFriction < clothSimAttribute.dynamicFriction)
 		//	clothSimAttribute.staticFriction = clothSimAttribute.dynamicFriction;
-		SrCloth_SetAttribute(simHndManager->clothHnd, &clothSimAttribute);
+		SrCloth_SetAttribute(simHndManager.clothHnds[flexIdx], &clothSimAttribute);
 
 		if (pinVerts.size() > 0)
 		{
-			SrCloth_SetVertPinFlags(simHndManager->clothHnd, pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
+			SrCloth_SetVertPinFlags(simHndManager.clothHnds[flexIdx], pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
 		}
 
 		if (solidifyStiff > 1.0e-3)
@@ -491,162 +618,79 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 				solidifyStiffs[i] = solidifyStiff;
 				solidifyVerts[i] = i;
 			}
-			SrCloth_Solidify(simHndManager->clothHnd, simHndManager->worldHnd, meshDesc.numVertices, solidifyStiffs.data(), solidifyVerts.data());
+			SrCloth_Solidify(simHndManager.clothHnds[flexIdx], simHndManager.worldHnd, meshDesc.numVertices, solidifyStiffs.data(), solidifyVerts.data());
 		}
 
-		SrCloth_Attach(simHndManager->clothHnd, simHndManager->worldHnd);
-
-		CreateStaticMeshes(m, d);
-
-		// create collider
-		if (useRigidCollider)
-		{
-			simHndManager->rigidHnds.resize(geoMeshIndexPair.size());
-			for (int i = 0; i < geoMeshIndexPair.size(); i++)
-			{
-				int g = geoMeshIndexPair[i].x;
-				int meshid = geoMeshIndexPair[i].y;
-				const mjtNum* mat = d->geom_xmat + 9 * g;
-				const mjtNum* pos = d->geom_xpos + 3 * g;
-				// convert transform coordinate
-				float rotMat[9];
-				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-				SrTransform transform;
-				transform.rotation = SrQuat_Create(rotMat);
-				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
-				transform.translation.x = +pos[0];
-				transform.translation.y = +pos[2];
-				transform.translation.z = -pos[1];
-
-				simHndManager->geoTransforms[g] = transform;
-
-				simHndManager->rigidHnds[i] = SrRigidBody_Create(simHndManager->meshHnds[meshid], &transform);
-				SrRigidBodySimAttribute rigidBodySimAttribute;
-				rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction;
-				rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction;
-				SrRigidBody_SetAttribute(simHndManager->rigidHnds[i], &rigidBodySimAttribute);
-				SrRigidBody_SetPinFlag(simHndManager->rigidHnds[i], true);
-				SrRigidBody_Attach(simHndManager->rigidHnds[i], simHndManager->worldHnd);
-			}
-		}
-		else
-		{
-			simHndManager->colliderHnds.resize(geoMeshIndexPair.size());
-			for (int i = 0; i < geoMeshIndexPair.size(); i++)
-			{
-				int g = geoMeshIndexPair[i].x;
-				int meshid = geoMeshIndexPair[i].y;
-				const mjtNum* mat = d->geom_xmat + 9 * g;
-				const mjtNum* pos = d->geom_xpos + 3 * g;
-				// convert transform coordinate
-				float rotMat[9];
-				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-				SrTransform transform;
-				transform.rotation = SrQuat_Create(rotMat);
-				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
-				transform.translation.x = +pos[0];
-				transform.translation.y = +pos[2];
-				transform.translation.z = -pos[1];
-
-				simHndManager->geoTransforms[g] = transform;
-
-				const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
-				size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
-				const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-				size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
-
-				std::vector<SrVec3f> postions(vertNum);
-				for (size_t vId = 0; vId < postions.size(); vId++)
-				{
-					postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
-				}
-				std::vector<SrVec3i> triangles(faceNum);
-				for (size_t tId = 0; tId < faceNum; tId++)
-				{
-					triangles[tId] = faces[tId];
-				}
-
-				// create mesh collider
-				SrMeshDesc colliderMeshDesc;
-				colliderMeshDesc.numVertices = postions.size();
-				colliderMeshDesc.numTriangles = faceNum;
-				colliderMeshDesc.positions = postions.data();
-				colliderMeshDesc.triangles = triangles.data();
-				simHndManager->colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
-				//if (colliderSimAttribute.staticFriction < colliderSimAttribute.dynamicFriction)
-				//	colliderSimAttribute.staticFriction = colliderSimAttribute.dynamicFriction;
-				SrMeshCollider_SetAttribute(simHndManager->colliderHnds[i], &colliderSimAttribute);
-				SrMeshCollider_Attach(simHndManager->colliderHnds[i], simHndManager->worldHnd);
-			}
-		}
+		SrCloth_Attach(simHndManager.clothHnds[flexIdx], simHndManager.worldHnd);
 	}
-	else
+	else if (frameIndex > 1)
 	{
-		if (useRigidCollider)
+		if (isMaster)
 		{
-			for (int i = 0; i < geoMeshIndexPair.size(); i++)
+			// update collider transform by master
+			auto& geoMeshIndexPair = simHndManager.geoMeshIndexPair;
+			if (useRigidCollider)
 			{
-				int g = geoMeshIndexPair[i].x;
-				const mjtNum* mat = d->geom_xmat + 9 * g;
-				const mjtNum* pos = d->geom_xpos + 3 * g;
-				// convert transform coordinate
-				float rotMat[9];
-				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-				SrTransform transform;
-				transform.rotation = SrQuat_Create(rotMat);
-				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
-				transform.translation.x = +pos[0];
-				transform.translation.y = +pos[2];
-				transform.translation.z = -pos[1];
-
-				if (IsEqual(simHndManager->geoTransforms[g], transform))
-					continue;
-				SrRigidBody_Move(simHndManager->rigidHnds[i], &simHndManager->geoTransforms[g], &transform);
-				simHndManager->geoTransforms[g] = transform;
-			}
-		}
-		else
-		{
-			for (int i = 0; i < geoMeshIndexPair.size(); i++)
-			{
-				int g = geoMeshIndexPair[i].x;
-				int meshid = geoMeshIndexPair[i].y;
-				const mjtNum* mat = d->geom_xmat + 9 * g;
-				const mjtNum* pos = d->geom_xpos + 3 * g;
-				// convert transform coordinate
-				float rotMat[9];
-				rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
-				rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
-				rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
-				SrTransform transform;
-				transform.rotation = SrQuat_Create(rotMat);
-				transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
-				transform.translation.x = +pos[0];
-				transform.translation.y = +pos[2];
-				transform.translation.z = -pos[1];
-
-				if (IsEqual(simHndManager->geoTransforms[g], transform))
-					continue;
-				simHndManager->geoTransforms[g] = transform;
-
-				const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager->meshHnds[meshid]);
-				size_t vertNum = SrMesh_GetVertNumber(simHndManager->meshHnds[meshid]);
-				//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-				//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
-
-				std::vector<SrVec3f> postions(vertNum);
-				for (size_t vId = 0; vId < postions.size(); vId++)
+				for (int i = 0; i < simHndManager.geoMeshIndexPair.size(); i++)
 				{
-					postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
-				}
+					int g = geoMeshIndexPair[i].x;
+					const mjtNum* mat = d->geom_xmat + 9 * g;
+					const mjtNum* pos = d->geom_xpos + 3 * g;
+					// convert transform coordinate
+					float rotMat[9];
+					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+					rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+					rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+					SrTransform transform;
+					transform.rotation = SrQuat_Create(rotMat);
+					transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+					transform.translation.x = +pos[0];
+					transform.translation.y = +pos[2];
+					transform.translation.z = -pos[1];
 
-				SrMeshCollider_MoveVerts(simHndManager->colliderHnds[i], postions.size(), nullptr, postions.data());
+					if (IsEqual(simHndManager.geoTransforms[g], transform))
+						continue;
+					SrRigidBody_Move(simHndManager.rigidHnds[i], &simHndManager.geoTransforms[g], &transform);
+					simHndManager.geoTransforms[g] = transform;
+				}
+			}
+			else
+			{
+				for (int i = 0; i < geoMeshIndexPair.size(); i++)
+				{
+					int g = geoMeshIndexPair[i].x;
+					int meshid = geoMeshIndexPair[i].y;
+					const mjtNum* mat = d->geom_xmat + 9 * g;
+					const mjtNum* pos = d->geom_xpos + 3 * g;
+					// convert transform coordinate
+					float rotMat[9];
+					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
+					rotMat[3] = mat[6]; rotMat[4] = mat[8]; rotMat[5] = -mat[7];
+					rotMat[6] = -mat[3]; rotMat[7] = -mat[5]; rotMat[8] = mat[4];
+					SrTransform transform;
+					transform.rotation = SrQuat_Create(rotMat);
+					transform.scale = SrVec3f{ 1.0f, 1.0f, 1.0f };
+					transform.translation.x = +pos[0];
+					transform.translation.y = +pos[2];
+					transform.translation.z = -pos[1];
+
+					if (IsEqual(simHndManager.geoTransforms[g], transform))
+						continue;
+					simHndManager.geoTransforms[g] = transform;
+
+					const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager.meshHnds[meshid]);
+					size_t vertNum = SrMesh_GetVertNumber(simHndManager.meshHnds[meshid]);
+					//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
+					//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
+
+					std::vector<SrVec3f> postions(vertNum);
+					for (size_t vId = 0; vId < postions.size(); vId++)
+					{
+						postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
+					}
+
+					SrMeshCollider_MoveVerts(simHndManager.colliderHnds[i], postions.size(), nullptr, postions.data());
+				}
 			}
 		}
 
@@ -654,34 +698,38 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		int numPin = pinVerts.size();
 		if (numPin > 0)
 		{
-			std::vector<SrVec3f>	pos(numPin);
+			std::vector<SrVec3f> pos(numPin);
 			for (int i = 0; i < numPin; i++)
 			{
-				int v = pinVerts[i];
+				int v = pinVerts[i] + flexVertAdr;
 				pos[i].x = m->flex_vert[3 * v + 0];
 				pos[i].y = m->flex_vert[3 * v + 2];
 				pos[i].z = -m->flex_vert[3 * v + 1];
 			}
 
-			SrCloth_SetVertPositions(simHndManager->clothHnd, numPin, pos.data(), pinVerts.data());
+			SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], numPin, pos.data(), pinVerts.data());
 		}
 	}
 
-	for (int s = 0; s < substep; ++s)
-		SrWorld_StepSim(simHndManager->worldHnd);
-	bool isCaptured = SrWorld_FetchSim(simHndManager->worldHnd);
-	if (isCaptured && frameIndex > 3) // trick, skip  first 3 frame, because mj do step when compile model
+	if (isMaster)
 	{
-		const SrVec3f* pos = SrCloth_GetVertPositions(simHndManager->clothHnd);
-		for (int i = 0; i < m->nflexvert - 1; ++i)// trick, last vert is ghost
-		{
-			m->flex_vert[3 * i + 0] = pos[i].x;
-			m->flex_vert[3 * i + 2] = pos[i].y;
-			m->flex_vert[3 * i + 1] = -pos[i].z;
-		}
+		for (int s = 0; s < substep; ++s)
+			SrWorld_StepSim(simHndManager.worldHnd);
+		SrWorld_FetchSim(simHndManager.worldHnd);
+		frameIndex++;
 	}
 
-	frameIndex++;
+	if (frameIndex > 3) // trick, skip  first 3 frame, because mj do step when compile model
+	{
+		const SrVec3f* pos = SrCloth_GetVertPositions(simHndManager.clothHnds[flexIdx]);
+		for (int i = 0; i < flexVertNum - 1; ++i)// trick, last vert is ghost
+		{
+			int vid = flexVertAdr + i;
+			m->flex_vert[3 * vid + 0] = pos[i].x;
+			m->flex_vert[3 * vid + 2] = pos[i].y;
+			m->flex_vert[3 * vid + 1] = -pos[i].z;
+		}
+	}
 }
 
 void Style3DSim::RegisterPlugin() {
@@ -713,6 +761,14 @@ return 0;
   plugin.destroy = +[](mjData* d, int instance) {
     delete reinterpret_cast<Style3DSim*>(d->plugin_data[instance]);
     d->plugin_data[instance] = 0;
+
+	auto& masterInstance = Style3DSimHndManager::GetSingleton().masterInstance;
+	if (masterInstance == instance)
+	{
+		// this plugin instance is master, clear manager
+		Style3DSimHndManager::GetSingleton().Clear();
+	}
+
   };
    plugin.compute =
        +[](const mjModel* m, mjData* d, int instance, int capability_bit) {
