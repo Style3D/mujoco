@@ -31,22 +31,60 @@
 
 namespace mujoco::plugin::style3dsim {
 
+// TODO: make it safer 
 class Style3DSimHndManager
 {
 public:
 
 	Style3DSimHndManager() {}
 
-	~Style3DSimHndManager();
+	~Style3DSimHndManager() { Clear(); }
+
+	static Style3DSimHndManager& GetSingleton()
+	{
+		static Style3DSimHndManager manager;
+		return manager;
+	}
+
+	void Clear()
+	{
+		masterInstance = -1;
+
+		SrWorld_Destroy(&worldHnd);
+		for (auto& hnd : colliderHnds)
+		{
+			SrMeshCollider_Destroy(&hnd);
+		}
+		for (auto& hnd : rigidHnds)
+		{
+			SrRigidBody_Destroy(&hnd);
+		}
+		colliderHnds.clear();
+		for (auto& hnd : meshHnds)
+		{
+			SrMesh_Destroy(&hnd.second);
+		}
+		meshHnds.clear();
+		for (auto& hnd : clothHnds)
+		{
+			SrCloth_Destroy(&hnd.second);
+		}
+		clothHnds.clear();
+		geoTransforms.clear();
+		geoMeshIndexPair.clear();
+	}
 
 public:
 
+	int masterInstance = -1;
+
 	SrWorldHnd worldHnd = nullptr;
-	SrClothHnd clothHnd = nullptr;
 	std::vector<SrMeshColliderHnd> colliderHnds;
 	std::vector<SrRigidBodyHnd> rigidHnds;
 	std::map<int, SrMeshHnd> meshHnds;
+	std::map<int, SrClothHnd> clothHnds; // key is flex id
 	std::map<int, SrTransform> geoTransforms;
+	std::vector<SrVec2i> geoMeshIndexPair; // collider geo mesh
 };
 
 
@@ -67,23 +105,25 @@ class Style3DSim {
 
   Style3DSim(const mjModel* m, mjData* d, int instance);
 
-  void CreateStaticMeshes(const mjModel* m, mjData* d);
+  void CreateS3dMeshes(const mjModel* m, mjData* d);
+
+  void InitFlexIdx(const mjModel* m, mjData* d, int instance);
 
  private:
 
-  std::vector<SrVec2i> geoMeshIndexPair;
-  int frameIndex = 0;
-  int substep = 1;
-  bool useRigidCollider = false;
-  bool useConvexHull = false;
+  int flexIdx = -1;
+  
   bool keepWrinkles = false;
   double solidifyStiff = 0.0;
   std::vector<int> pinVerts;
+  SrClothSimAttribute clothSimAttribute;
+
+  // global settings, only use master data
+  int substep = 1;
+  bool useRigidCollider = false;
+  bool useConvexHull = false;
   std::string usr = "";
   std::string pwd = "";
-
-  std::shared_ptr<Style3DSimHndManager> simHndManager;
-  SrClothSimAttribute clothSimAttribute;
   SrColliderSimAttribute colliderSimAttribute;
   SrWorldSimAttribute worldSimAttribute;
 };
