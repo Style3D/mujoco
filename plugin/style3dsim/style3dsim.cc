@@ -428,21 +428,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 	{
 		if (isMaster)
 		{
-			// init sim world and collider
-			auto LoginCallback = [](bool bSucceed, const char* errorType, const char* message)
-				{
-					if (bSucceed)
-					{
-						printf("Succeed login.\n");
-					}
-					else
-					{
-						printf("Fail login, errorType: %s, message: %s.\n", errorType, message);
-					}
-				};
-			if (!SrIsLogin())
-				SrLogin(usr.c_str(), pwd.c_str(), true, LoginCallback);
-
 			// log callback
 			auto pfnSrLogCallback = [](const char* pFileName, const char* pFunName, int line, SrLogVerb eLogVerb, const char* pMsg)
 				{
@@ -468,6 +453,21 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					}
 				};
 			SrSetLogCallback(pfnSrLogCallback);
+
+			// init sim world and collider
+			auto LoginCallback = [](bool bSucceed, const char* errorType, const char* message)
+				{
+					if (bSucceed)
+					{
+						printf("Succeed login.\n");
+					}
+					else
+					{
+						printf("Fail login, errorType: %s, message: %s.\n", errorType, message);
+					}
+				};
+			if (!SrIsLogin())
+				SrLogin(usr.c_str(), pwd.c_str(), true, LoginCallback);
 
 			// create world
 			simHndManager.Clear(); // clear sim hnds at first frame
@@ -702,9 +702,9 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			for (int i = 0; i < numPin; i++)
 			{
 				int v = pinVerts[i] + flexVertAdr;
-				pos[i].x = m->flex_vert[3 * v + 0];
-				pos[i].y = m->flex_vert[3 * v + 2];
-				pos[i].z = -m->flex_vert[3 * v + 1];
+				pos[i].x = d->flexvert_xpos[3 * v + 0];
+				pos[i].y = d->flexvert_xpos[3 * v + 2];
+				pos[i].z = -d->flexvert_xpos[3 * v + 1];
 			}
 
 			SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], numPin, pos.data(), pinVerts.data());
@@ -725,9 +725,9 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 		for (int i = 0; i < flexVertNum - 1; ++i)// trick, last vert is ghost
 		{
 			int vid = flexVertAdr + i;
-			m->flex_vert[3 * vid + 0] = pos[i].x;
-			m->flex_vert[3 * vid + 2] = pos[i].y;
-			m->flex_vert[3 * vid + 1] = -pos[i].z;
+			d->flexvert_xpos[3 * vid + 0] = pos[i].x;
+			d->flexvert_xpos[3 * vid + 2] = pos[i].y;
+			d->flexvert_xpos[3 * vid + 1] = -pos[i].z;
 		}
 	}
 }
