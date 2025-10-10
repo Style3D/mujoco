@@ -449,12 +449,20 @@ void mj_flex(const mjModel* m, mjData* d) {
     return;
   }
 
+  int frame_index = mju_round(d->time / m->opt.timestep);
   // compute Cartesian positions of flex vertices
   for (int f=0; f < m->nflex; f++) {
     int vstart = m->flex_vertadr[f];
     int vend = m->flex_vertadr[f] + m->flex_vertnum[f];
     int nstart = m->flex_nodeadr[f];
     int nend = m->flex_nodeadr[f] + m->flex_nodenum[f];
+
+#ifdef CUSTOM_SIM
+    // skip custom flex, flexvert_xpos already computed by external custom solver
+    if (m->flex_custom[f] && frame_index > 1) {
+        continue;
+    }
+#endif
 
     // 0: vertices are the mesh vertices, 1: vertices are interpolated from nodal dofs
     if (m->flex_interp[f] == 0) {
