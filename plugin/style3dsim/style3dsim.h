@@ -31,6 +31,15 @@
 
 namespace mujoco::plugin::style3dsim {
 
+enum class EStyle3DCustomBit : mjtByte
+{
+	Default = 1 << 0,
+	SkipSim = 1 << 1,
+	ResetPos = 1 << 2,
+	ClearPin = 1 << 3,
+	RestorePin = 1 << 4,
+};
+
 // TODO: make it safer 
 class Style3DSimHndManager
 {

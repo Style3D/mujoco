@@ -423,6 +423,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 	int flexVertAdr = m->flex_vertadr[flexIdx];
 	int flexElemNum = m->flex_elemnum[flexIdx];
 	int flexElemAdr = m->flex_elemadr[flexIdx];
+	mjtByte flexCustomFlag = m->flex_custom[flexIdx]; 
 
 	if (frameIndex == 1) // init sim in first frame
 	{
@@ -694,28 +695,65 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			}
 		}
 
-		// set cloth positions for pin verts
-		int numPin = pinVerts.size();
-		if (numPin > 0)
+		if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::ClearPin)
 		{
-			std::vector<SrVec3f> pos(numPin);
-			for (int i = 0; i < numPin; i++)
+			if (pinVerts.size() > 0)
 			{
-				int v = pinVerts[i] + flexVertAdr;
-				pos[i].x = d->flexvert_xpos[3 * v + 0];
-				pos[i].y = d->flexvert_xpos[3 * v + 2];
-				pos[i].z = -d->flexvert_xpos[3 * v + 1];
+				std::vector<char> isPinned(pinVerts.size(), 0);
+				SrCloth_SetVertPinFlags(simHndManager.clothHnds[flexIdx], pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
 			}
+		}
+		else if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::RestorePin)
+		{
+			if (pinVerts.size() > 0)
+			{
+				std::vector<char> isPinned(pinVerts.size(), 1);
+				SrCloth_SetVertPinFlags(simHndManager.clothHnds[flexIdx], pinVerts.size(), (bool*)isPinned.data(), pinVerts.data());
+			}
+		}
 
-			SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], numPin, pos.data(), pinVerts.data());
+		if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::ResetPos)
+		{
+			std::vector<SrVec3f> pos(flexVertNum);
+			std::vector<int> vertIndices(flexVertNum);
+			for (int i = 0; i < flexVertNum; ++i)
+			{
+				int vid = flexVertAdr + i;
+				pos[i].x = d->flexvert_xpos[3 * vid + 0];
+				pos[i].y = d->flexvert_xpos[3 * vid + 2];
+				pos[i].z = -d->flexvert_xpos[3 * vid + 1];
+				vertIndices[i] = i;
+			}
+			SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], flexVertNum - 1, pos.data(), vertIndices.data());
+		}
+		else
+		{
+			// set cloth positions for pin verts
+			int numPin = pinVerts.size();
+			if (numPin > 0)
+			{
+				std::vector<SrVec3f> pos(numPin);
+				for (int i = 0; i < numPin; i++)
+				{
+					int v = pinVerts[i] + flexVertAdr;
+					pos[i].x = d->flexvert_xpos[3 * v + 0];
+					pos[i].y = d->flexvert_xpos[3 * v + 2];
+					pos[i].z = -d->flexvert_xpos[3 * v + 1];
+				}
+
+				SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], numPin, pos.data(), pinVerts.data());
+			}
 		}
 	}
 
 	if (isMaster)
 	{
-		for (int s = 0; s < substep; ++s)
-			SrWorld_StepSim(simHndManager.worldHnd);
-		SrWorld_FetchSim(simHndManager.worldHnd);
+		if (!(flexCustomFlag & (mjtByte)EStyle3DCustomBit::SkipSim))
+		{
+			for (int s = 0; s < substep; ++s)
+				SrWorld_StepSim(simHndManager.worldHnd);
+			SrWorld_FetchSim(simHndManager.worldHnd);
+		}
 		frameIndex++;
 	}
 
@@ -729,6 +767,10 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			d->flexvert_xpos[3 * vid + 2] = pos[i].y;
 			d->flexvert_xpos[3 * vid + 1] = -pos[i].z;
 		}
+
+		// reset the ghost vert for numeric safety
+		int ghostVertIdx = flexVertAdr + flexVertNum - 1;
+		mju_zero3(d->xpos + 3 * m->flex_vertbodyid[ghostVertIdx]);
 	}
 }
 
