@@ -575,7 +575,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					auto curColliderSimAttribute = colliderSimAttribute;
 					curColliderSimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
 					curColliderSimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
-					SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &colliderSimAttribute);
+					SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &curColliderSimAttribute);
 					SrMeshCollider_Attach(simHndManager.colliderHnds[i], simHndManager.worldHnd);
 				}
 			}
@@ -691,7 +691,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 						auto curColliderSimAttribute = colliderSimAttribute;
 						curColliderSimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
 						curColliderSimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
-						SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &colliderSimAttribute);
+						SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &curColliderSimAttribute);
 						simHndManager.geoSlideFrictions[g] = geomSlideFrition;
 					}
 					// convert transform coordinate
