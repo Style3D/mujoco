@@ -80,6 +80,7 @@ public:
 		}
 		clothHnds.clear();
 		geoTransforms.clear();
+		geoSlideFrictions.clear();
 		geoMeshIndexPair.clear();
 	}
 
@@ -93,6 +94,7 @@ public:
 	std::map<int, SrMeshHnd> meshHnds;
 	std::map<int, SrClothHnd> clothHnds; // key is flex id
 	std::map<int, SrTransform> geoTransforms;
+	std::map<int, mjtNum> geoSlideFrictions;
 	std::vector<SrVec2i> geoMeshIndexPair; // collider geo mesh
 };
 
