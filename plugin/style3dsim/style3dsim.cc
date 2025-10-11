@@ -294,6 +294,10 @@ Style3DSim::~Style3DSim() {}
 
 void Style3DSim::CreateS3dMeshes(const mjModel* m, mjData* d)
 {
+	// use master flex to filter collision, may improve in the future
+	int flex_contype = m->flex_contype[flexIdx];
+	int flex_conaffinity = m->flex_conaffinity[flexIdx];
+
 	auto& geoMeshIndexPair = Style3DSimHndManager::GetSingleton().geoMeshIndexPair;
 	geoMeshIndexPair.reserve(m->ngeom);
 	auto& meshHnds = Style3DSimHndManager::GetSingleton().meshHnds;
@@ -301,13 +305,14 @@ void Style3DSim::CreateS3dMeshes(const mjModel* m, mjData* d)
 	{
 		int meshid = m->geom_dataid[i];
 		if (meshid < 0) continue;
-
-		if (useConvexHull)
+		if (m->geom_type[i] != mjGEOM_MESH) continue;
+		if (useConvexHull && m->mesh_graphadr[meshid] < 0)
 		{
-			if (m->geom_type[i] != mjGEOM_MESH) continue;
-			if (m->mesh_graphadr[meshid] < 0) continue;
-			if (!m->geom_contype[i] && !m->geom_conaffinity[i]) continue;
+			continue;
 		}
+
+		// use mujoco filter rule
+		if (!(m->geom_contype[i] & flex_conaffinity) && !(m->geom_conaffinity[i] & flex_contype)) continue;
 
 		geoMeshIndexPair.push_back(SrVec2i{ i, meshid });
 		if (meshHnds.find(meshid) != meshHnds.end()) continue;
