@@ -2863,6 +2863,14 @@ STRUCTS: Mapping[str, StructDecl] = dict([
                  array_extent=('nflex',),
              ),
              StructFieldDecl(
+                 name='flex_custom',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjtByte'),
+                 ),
+                 doc='use custom simulator instead of mujoco',
+                 array_extent=('nflex',),
+             ),
+             StructFieldDecl(
                  name='flex_rigid',
                  type=PointerType(
                      inner_type=ValueType(name='mjtByte'),
