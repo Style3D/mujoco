@@ -499,6 +499,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					int meshid = simHndManager.geoMeshIndexPair[i].y;
 					const mjtNum* mat = d->geom_xmat + 9 * g;
 					const mjtNum* pos = d->geom_xpos + 3 * g;
+					const mjtNum geomSlideFrition = m->geom_friction[3 * g];
 					// convert transform coordinate
 					float rotMat[9];
 					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
@@ -512,11 +513,12 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					transform.translation.z = -pos[1];
 
 					simHndManager.geoTransforms[g] = transform;
+					simHndManager.geoSlideFrictions[g] = geomSlideFrition;
 
 					simHndManager.rigidHnds[i] = SrRigidBody_Create(simHndManager.meshHnds[meshid], &transform);
 					SrRigidBodySimAttribute rigidBodySimAttribute;
-					rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction;
-					rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction;
+					rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
+					rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
 					SrRigidBody_SetAttribute(simHndManager.rigidHnds[i], &rigidBodySimAttribute);
 					SrRigidBody_SetPinFlag(simHndManager.rigidHnds[i], true);
 					SrRigidBody_Attach(simHndManager.rigidHnds[i], simHndManager.worldHnd);
@@ -531,6 +533,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					int meshid = simHndManager.geoMeshIndexPair[i].y;
 					const mjtNum* mat = d->geom_xmat + 9 * g;
 					const mjtNum* pos = d->geom_xpos + 3 * g;
+					const mjtNum geomSlideFrition = m->geom_friction[3 * g];
 					// convert transform coordinate
 					float rotMat[9];
 					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
@@ -544,6 +547,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					transform.translation.z = -pos[1];
 
 					simHndManager.geoTransforms[g] = transform;
+					simHndManager.geoSlideFrictions[g] = geomSlideFrition;
 
 					const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager.meshHnds[meshid]);
 					size_t vertNum = SrMesh_GetVertNumber(simHndManager.meshHnds[meshid]);
@@ -568,6 +572,9 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					colliderMeshDesc.positions = postions.data();
 					colliderMeshDesc.triangles = triangles.data();
 					simHndManager.colliderHnds[i] = SrMeshCollider_Create(&colliderMeshDesc);
+					auto curColliderSimAttribute = colliderSimAttribute;
+					curColliderSimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
+					curColliderSimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
 					SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &colliderSimAttribute);
 					SrMeshCollider_Attach(simHndManager.colliderHnds[i], simHndManager.worldHnd);
 				}
@@ -642,6 +649,15 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					int g = geoMeshIndexPair[i].x;
 					const mjtNum* mat = d->geom_xmat + 9 * g;
 					const mjtNum* pos = d->geom_xpos + 3 * g;
+					const mjtNum geomSlideFrition = m->geom_friction[3 * g];
+					if (!IsEqual(simHndManager.geoSlideFrictions[g], geomSlideFrition))
+					{
+						SrRigidBodySimAttribute rigidBodySimAttribute;
+						rigidBodySimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
+						rigidBodySimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
+						SrRigidBody_SetAttribute(simHndManager.rigidHnds[i], &rigidBodySimAttribute);
+						simHndManager.geoSlideFrictions[g] = geomSlideFrition;
+					}
 					// convert transform coordinate
 					float rotMat[9];
 					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
@@ -654,10 +670,11 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					transform.translation.y = +pos[2];
 					transform.translation.z = -pos[1];
 
-					if (IsEqual(simHndManager.geoTransforms[g], transform))
-						continue;
-					SrRigidBody_Move(simHndManager.rigidHnds[i], &simHndManager.geoTransforms[g], &transform);
-					simHndManager.geoTransforms[g] = transform;
+					if (!IsEqual(simHndManager.geoTransforms[g], transform))
+					{
+						SrRigidBody_Move(simHndManager.rigidHnds[i], &simHndManager.geoTransforms[g], &transform);
+						simHndManager.geoTransforms[g] = transform;
+					}
 				}
 			}
 			else
@@ -668,6 +685,15 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					int meshid = geoMeshIndexPair[i].y;
 					const mjtNum* mat = d->geom_xmat + 9 * g;
 					const mjtNum* pos = d->geom_xpos + 3 * g;
+					const mjtNum geomSlideFrition = m->geom_friction[3 * g];
+					if (!IsEqual(simHndManager.geoSlideFrictions[g], geomSlideFrition))
+					{
+						auto curColliderSimAttribute = colliderSimAttribute;
+						curColliderSimAttribute.staticFriction = colliderSimAttribute.staticFriction < 0 ? geomSlideFrition : colliderSimAttribute.staticFriction;
+						curColliderSimAttribute.dynamicFriction = colliderSimAttribute.dynamicFriction < 0 ? geomSlideFrition : colliderSimAttribute.dynamicFriction;
+						SrMeshCollider_SetAttribute(simHndManager.colliderHnds[i], &colliderSimAttribute);
+						simHndManager.geoSlideFrictions[g] = geomSlideFrition;
+					}
 					// convert transform coordinate
 					float rotMat[9];
 					rotMat[0] = mat[0]; rotMat[1] = mat[2]; rotMat[2] = -mat[1];
@@ -680,22 +706,23 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 					transform.translation.y = +pos[2];
 					transform.translation.z = -pos[1];
 
-					if (IsEqual(simHndManager.geoTransforms[g], transform))
-						continue;
-					simHndManager.geoTransforms[g] = transform;
-
-					const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager.meshHnds[meshid]);
-					size_t vertNum = SrMesh_GetVertNumber(simHndManager.meshHnds[meshid]);
-					//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
-					//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
-
-					std::vector<SrVec3f> postions(vertNum);
-					for (size_t vId = 0; vId < postions.size(); vId++)
+					if (!IsEqual(simHndManager.geoTransforms[g], transform))
 					{
-						postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
-					}
+						simHndManager.geoTransforms[g] = transform;
 
-					SrMeshCollider_MoveVerts(simHndManager.colliderHnds[i], postions.size(), nullptr, postions.data());
+						const SrVec3f* verts = SrMesh_GetVertPositions(simHndManager.meshHnds[meshid]);
+						size_t vertNum = SrMesh_GetVertNumber(simHndManager.meshHnds[meshid]);
+						//const SrVec3i* faces = SrMesh_GetTriangles(simHndManager->meshHnds[meshid]);
+						//size_t faceNum = SrMesh_GetTriangleNumber(simHndManager->meshHnds[meshid]);
+
+						std::vector<SrVec3f> postions(vertNum);
+						for (size_t vId = 0; vId < postions.size(); vId++)
+						{
+							postions[vId] = SrTransform_TransformVec3f(&transform, &verts[vId]);
+						}
+
+						SrMeshCollider_MoveVerts(simHndManager.colliderHnds[i], postions.size(), nullptr, postions.data());
+					}
 				}
 			}
 		}
