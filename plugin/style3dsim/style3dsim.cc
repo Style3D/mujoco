@@ -744,7 +744,7 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			}
 		}
 
-		if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::ResetPos)
+		if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::SetPos)
 		{
 			std::vector<SrVec3f> pos(flexVertNum);
 			std::vector<int> vertIndices(flexVertNum);
@@ -775,6 +775,19 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 
 				SrCloth_SetVertPositions(simHndManager.clothHnds[flexIdx], numPin, pos.data(), pinVerts.data());
 			}
+		}
+
+		if (flexCustomFlag & (mjtByte)EStyle3DCustomBit::ClearVel)
+		{
+			std::vector<SrVec3f> vel(flexVertNum);
+			std::vector<int> vertIndices(flexVertNum);
+			for (int i = 0; i < flexVertNum; ++i)
+			{
+				int vid = flexVertAdr + i;
+				vel[i].x = vel[i].y = vel[i].z = 0.0f;
+				vertIndices[i] = i;
+			}
+			SrCloth_SetVertVelocities(simHndManager.clothHnds[flexIdx], flexVertNum - 1, vel.data(), vertIndices.data());
 		}
 	}
 

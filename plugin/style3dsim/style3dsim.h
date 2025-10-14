@@ -35,9 +35,10 @@ enum class EStyle3DCustomBit : mjtByte
 {
 	Default = 1 << 0,
 	SkipSim = 1 << 1,
-	ResetPos = 1 << 2,
-	ClearPin = 1 << 3,
-	RestorePin = 1 << 4,
+	SetPos = 1 << 2,
+	ClearVel = 1 << 3,
+	ClearPin = 1 << 4,
+	RestorePin = 1 << 5,
 };
 
 // TODO: make it safer 
