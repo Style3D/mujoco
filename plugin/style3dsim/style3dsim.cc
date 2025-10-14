@@ -783,7 +783,6 @@ void Style3DSim::Advance(const mjModel* m, mjData* d, int instance) {
 			std::vector<int> vertIndices(flexVertNum);
 			for (int i = 0; i < flexVertNum; ++i)
 			{
-				int vid = flexVertAdr + i;
 				vel[i].x = vel[i].y = vel[i].z = 0.0f;
 				vertIndices[i] = i;
 			}
