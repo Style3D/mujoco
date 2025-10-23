@@ -22,7 +22,8 @@ class config:
     mujoco_py:cfg_mujoco_py
 
 def _run_cmd(cmd):
-    print(f"-- CMD : {' '.join(cmd)}")
+    full_cmd=' '.join(cmd)
+    print(f"-- CMD : {full_cmd}")
 
     try:
         with subprocess.Popen(
@@ -40,22 +41,22 @@ def _run_cmd(cmd):
             proc.wait()
 
             if proc.returncode != 0:
-                print(f"-- CMD END failed with exit code {proc.returncode}", file=sys.stderr)
+                print(f"-- CMD END failed with exit code {proc.returncode}: {full_cmd} ", file=sys.stderr)
                 sys.exit(proc.returncode)
 
     except FileNotFoundError:
-        print(f"-- CMD END Command not found: {cmd[0]}", file=sys.stderr)
+        print(f"-- CMD END Command not found: {cmd[0]}: {full_cmd}", file=sys.stderr)
         sys.exit(127)  # 127 is standard POSIX code for "command not found"
 
     except PermissionError:
-        print(f"-- CMD END Permission denied: {cmd[0]}", file=sys.stderr)
+        print(f"-- CMD END Permission denied: {cmd[0]}: {full_cmd}", file=sys.stderr)
         sys.exit(126)  # 126 is standard POSIX code for "not executable"
 
     except OSError as e:
-        print(f"-- CMD END OS error while trying to run command: {e}", file=sys.stderr)
+        print(f"-- CMD END OS error while trying to run command: {e}: {full_cmd}", file=sys.stderr)
         sys.exit(1)
 
-    print("-- CMD END succeeded!")
+    print(f"-- CMD END succeeded: {full_cmd}")
 
 
 def __copytree(dst, src, symlinks = False, ignore = None):
