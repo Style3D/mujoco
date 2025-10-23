@@ -18,8 +18,12 @@
 *.egg-info/
 build/
 build_cmake/
+build_py/
 python/dist/
+python/.venv/
 doc/_build
+temp_build/
+temp_install/
 
 # Exclude macOS folder attributes
 .DS_Store
