@@ -317,7 +317,11 @@ class BuildCMakeExtension(build_ext.build_ext):
 
   def build_extension(self, ext):
     dest_path = self.get_ext_fullpath(ext.name)
-    build_path = os.path.join(self.build_temp, os.path.basename(dest_path))
+    if  os.name == 'nt':
+      build_path = os.path.join(self.build_temp, 'Release',os.path.basename(dest_path))
+    else :
+      build_path = os.path.join(self.build_temp, os.path.basename(dest_path))
+    print(" copy:-> ",build_path,'->',dest_path)
     shutil.copyfile(build_path, dest_path)
 
 

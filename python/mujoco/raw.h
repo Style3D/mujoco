@@ -64,12 +64,12 @@ using MjSolverStat = ::mjSolverStat;
 using MjStatistic = ::mjStatistic;
 using MjTimerStat = ::mjTimerStat;
 using MjVisual = ::mjVisual;
-using MjVisualGlobal = decltype(::mjVisual::global);
-using MjVisualQuality = decltype(::mjVisual::quality);
-using MjVisualHeadlight = decltype(::mjVisual::headlight);
-using MjVisualMap = decltype(::mjVisual::map);
-using MjVisualScale = decltype(::mjVisual::scale);
-using MjVisualRgba = decltype(::mjVisual::rgba);
+using MjVisualGlobal = ::mjVisual::mjGlobal;
+using MjVisualQuality = ::mjVisual::mjQuality;
+using MjVisualHeadlight = ::mjVisual::mjHeadlight;
+using MjVisualMap = ::mjVisual::mjMap;
+using MjVisualScale = ::mjVisual::mjScale;
+using MjVisualRgba = ::mjVisual::mjRgba;
 using MjWarningStat = ::mjWarningStat;
 
 // From mjrender.h

@@ -119,8 +119,8 @@ add_subdirectory(src/ui)
 
 if(MUJOCO_BUILD_STYLE3D)
   add_subdirectory(plugin/style3dsim)
-  target_compile_definitions(mujoco PUBLIC CUSTOM_SIM)
 endif()
+target_compile_definitions(mujoco PUBLIC CUSTOM_SIM)
 
 target_compile_definitions(mujoco PRIVATE _GNU_SOURCE CCD_STATIC_DEFINE MUJOCO_DLL_EXPORTS -DMC_IMPLEM_ENABLE)
 if(MUJOCO_ENABLE_AVX_INTRINSICS)
