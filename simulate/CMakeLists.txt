@@ -29,7 +29,7 @@ set(MUJOCO_DEP_VERSION_lodepng
 
 project(
   mujoco_simulate
-  VERSION 3.3.7
+  VERSION 3.12.0
   DESCRIPTION "MuJoCo simulate binaries"
   HOMEPAGE_URL "https://mujoco.org"
 )
@@ -185,13 +185,6 @@ if(SIMULATE_BUILD_EXECUTABLE)
     target_link_libraries(simulate "-framework CoreVideo")
   endif()
 
-  if (MUJOCO_WITH_USD)
-    target_link_libraries(
-      simulate
-      mujoco::usd::mjcf
-    )
-  endif()
-
   target_link_options(simulate PRIVATE ${MUJOCO_SIMULATE_LINK_OPTIONS})
 
   if(APPLE AND MUJOCO_BUILD_MACOS_FRAMEWORKS)
@@ -257,22 +250,6 @@ if(SIMULATE_BUILD_EXECUTABLE)
       DEPENDS
       MUJOCO_ENABLE_RPATH
     )
-
-    if (MUJOCO_WITH_USD)
-      target_compile_definitions(simulate PUBLIC mjUSEUSD)
-
-      # Add support to RPATH for the samples.
-      target_add_rpath(
-        TARGETS
-        simulate
-        INSTALL_DIRECTORY
-        "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}"
-        LIB_DIRS
-        ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/mujocoUsd ${USD_DIR}/lib
-        DEPENDS
-        MUJOCO_ENABLE_RPATH
-      )
-    endif()
 
     if(NOT MUJOCO_SIMULATE_USE_SYSTEM_GLFW)
       # We downloaded GLFW. Depending if it is a static or shared LIBRARY we might

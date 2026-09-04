@@ -18,11 +18,18 @@
 #include <mujoco/mjdata.h>
 #include <mujoco/mjexport.h>
 #include <mujoco/mjmodel.h>
+#include <mujoco/mjtype.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 //-------------------------- position --------------------------------------------------------------
+
+// forward kinematics part 1: bodies
+void mj_kinematics1(const mjModel* m, mjData* d);
+
+// forward kinematics part 2: body inertias, geoms and sites
+void mj_kinematics2(const mjModel* m, mjData* d);
 
 // forward kinematics
 MJAPI void mj_kinematics(const mjModel* m, mjData* d);
@@ -39,8 +46,8 @@ MJAPI void mj_flex(const mjModel* m, mjData* d);
 // compute tendon lengths, velocities and moment arms
 MJAPI void mj_tendon(const mjModel* m, mjData* d);
 
-// compute time derivative of dense tendon Jacobian for one tendon
-MJAPI void mj_tendonDot(const mjModel* m, mjData* d, int id, mjtNum* Jdot);
+// return dot product of tendon Jacobian time derivative with vector
+MJAPI mjtNum mj_tendonDot(const mjModel* m, mjData* d, int id, const mjtNum* vec);
 
 // compute actuator transmission lengths and moments
 MJAPI void mj_transmission(const mjModel* m, mjData* d);
@@ -57,25 +64,17 @@ MJAPI void mj_tendonArmature(const mjModel* m, mjData* d);
 // make inertia matrix
 MJAPI void mj_makeM(const mjModel* m, mjData* d);
 
-// sparse L'*D*L factorizaton of inertia-like matrix M, assumed spd  (legacy implementation)
-MJAPI void mj_factorI_legacy(const mjModel* m, mjData* d, const mjtNum* M,
-                             mjtNum* qLD, mjtNum* qLDiagInv);
-
-// sparse L'*D*L factorizaton of inertia-like matrix
+// sparse L'*D*L factorizaton of inertia-like matrix (only dofs in index, if given)
 MJAPI void mj_factorI(mjtNum* mat, mjtNum* diaginv, int nv,
-                      const int* rownnz, const int* rowadr, const int* colind);
+                      const int* rownnz, const int* rowadr, const int* colind, const int* index);
 
 // sparse L'*D*L factorizaton of the inertia matrix M, assumed spd
 MJAPI void mj_factorM(const mjModel* m, mjData* d);
 
-// sparse backsubstitution:  x = inv(L'*D*L)*x  (legacy implementation)
-MJAPI void mj_solveLD_legacy(const mjModel* m, mjtNum* x, int n,
-                             const mjtNum* qLD, const mjtNum* qLDiagInv);
-
-// in-place sparse backsubstitution:  x = inv(L'*D*L)*x
+// in-place sparse backsubstitution (only dofs in index, if given):  x = inv(L'*D*L)*x
 //  handle n vectors at once
 MJAPI void mj_solveLD(mjtNum* x, const mjtNum* qLD, const mjtNum* qLDiagInv, int nv, int n,
-                      const int* rownnz, const int* rowadr, const int* colind);
+                      const int* rownnz, const int* rowadr, const int* colind, const int* index);
 
 // sparse backsubstitution:  x = inv(L'*D*L)*y, use factorization in d
 MJAPI void mj_solveM(const mjModel* m, mjData* d, mjtNum* x, const mjtNum* y, int n);

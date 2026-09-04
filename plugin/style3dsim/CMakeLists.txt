@@ -47,9 +47,9 @@ target_link_options(
 # Link Style3DSimulator
 if(NOT DEFINED Style3DSimulatorDir)
 	if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
-		set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/win)
+		set(Style3DSimulatorDir ${PROJECT_SOURCE_DIR}/Style3DSimulatorBin/win)
 	elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-		set(Style3DSimulatorDir ${CMAKE_CURRENT_SOURCE_DIR}/Style3DSimulatorBin/linux)
+		set(Style3DSimulatorDir ${PROJECT_SOURCE_DIR}/Style3DSimulatorBin/linux)
 	else() 
 		#TODO
 	endif()

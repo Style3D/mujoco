@@ -15,42 +15,75 @@
 #ifndef MUJOCO_SRC_EXPERIMENTAL_STUDIO_APP_H_
 #define MUJOCO_SRC_EXPERIMENTAL_STUDIO_APP_H_
 
-#include <chrono>
-#include <cstdint>
+#include <cstddef>
+#include <functional>
 #include <memory>
-#include <ratio>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include <mujoco/mujoco.h>
-#include "experimental/toolbox/helpers.h"
-#include "experimental/toolbox/physics.h"
-#include "experimental/toolbox/renderer.h"
-#include "experimental/toolbox/window.h"
+#include "experimental/platform/hal/graphics_mode.h"
+#include "experimental/platform/hal/renderer.h"
+#include "experimental/platform/hal/window.h"
+#include "experimental/platform/sim/model_holder.h"
+#include "experimental/platform/sim/sim_history.h"
+#include "experimental/platform/sim/sim_profiler.h"
+#include "experimental/platform/sim/step_control.h"
+#include "experimental/platform/ux/gui.h"
+#include "experimental/platform/ux/gui_spec.h"
+#include "experimental/platform/ux/imgui_widgets.h"
+#include "experimental/platform/ux/interaction.h"
+#include "experimental/platform/ux/picture_gui.h"
+#include "experimental/platform/ux/spec_editor.h"
 
 namespace mujoco::studio {
 
 // Owns, updates, and renders a MuJoCo simulation.
 class App {
  public:
-  using Clock = std::chrono::steady_clock;
-  using TimePoint = std::chrono::time_point<Clock>;
-  using Seconds = std::chrono::duration<double>;
-  using Milliseconds = std::chrono::duration<double, std::milli>;
+  // Configuration/initialization options for the application.
+  struct Config {
+    // The original width and height of the window.
+    int width = 0;
+    int height = 0;
 
-  App(int width, int height, std::string ini_path,
-      const toolbox::LoadAssetFn& load_asset_fn);
+    // The path to the ini file containing the user settings.
+    std::string ini_path;
 
-  // Loads a model into the simulation.
-  void LoadModel(std::string model_file);
+    // The graphics configuration used for initializing the window.
+    platform::GraphicsMode gfx_mode = platform::GraphicsMode::FilamentVulkan;
+
+    // The initial GUI theme. If set, overrides the default (kLight).
+    std::optional<platform::GuiTheme> initial_theme;
+
+    // The application title shown in the window title bar.
+    std::string title = "MuJoCo Studio";
+  };
+
+  explicit App(Config config);
+  ~App();
+
+  // Loads an empty mjModel.
+  void InitEmptyModel();
+
+  // Loads an mjModel from the given file. This extension should be one of:
+  // .xml, .mjb, or .mjz.
+  void LoadModelFromFile(const std::string& filepath);
+
+  // Loads an mjModel from the given memory buffer. The content_type should be
+  // one of: "text/xml", "application/mjb", or "application/mjz". For zip files,
+  // a name is required in order to uniquely identify the model within the
+  // archive.
+  void LoadModelFromBuffer(std::span<const std::byte> buffer,
+                           std::string_view content_type,
+                           std::string_view name);
 
   // Processes window events and advances the state of the simulation.
   bool Update();
-
-  // Syncs the state of the simulation with the renderer.
-  void Sync();
 
   // Builds the GUI. We do this after Sync() to ensure we have the latest data
   // for building the GUI.
@@ -60,31 +93,30 @@ class App {
   void Render();
 
  private:
-  static int LoadAssetCallback(const char* path, void* user_data,
-                               unsigned char** out, std::uint64_t* out_size);
+  // The kind of model that is currently loaded.
+  enum ModelKind {
+    kEmptyModel,
+    kModelFromFile,
+    kModelFromBuffer,
+  };
+
+  enum class SpecPropertiesMode {
+    kSpec,
+    kModel,
+    kData,
+  };
 
   // UI state that is persisted across application runs
   struct UiState {
-    bool classic_ui = true;
-
     char watch_field[1000] = "qpos";
     int watch_index = 0;
-    int camera_idx = 0;
+    int camera_idx = platform::kTumbleCameraIdx;
     int key_idx = 0;
-    int scrub_idx = 0;
-    bool dark_mode = true;
-
-    // UI visibility.
-    bool simulation = false;
-    bool physics = false;
-    bool rendering = false;
-    bool watch = false;
-    bool visualization = false;
-    bool groups = false;
-    bool joints = false;
-    bool controls = false;
-    bool profiler = false;
-    bool sensor = false;
+    platform::GuiTheme theme = platform::GuiTheme::kDark;
+    float font_scale = 1.0f;
+    int window_width = 0;
+    int window_height = 0;
+    int nthread = 0;
 
     using Dict = std::unordered_map<std::string, std::string>;
     Dict ToDict() const;
@@ -92,98 +124,158 @@ class App {
   };
 
   // UI state that is transient and only needed while the application runs
-  // TODO(matijak): Combine this with UiState and identify the list of transient
-  // variables with a comment
   struct UiTempState {
-    // bool paused = false;  // Application starts with the simulation running.
+    bool should_exit = false;
+    bool first_frame = true;
+    bool update_threadpool = false;
+
+    // Windows.
     bool help = false;
     bool info = false;
-    bool modal_open = false;
-    bool load_popup = false;
-    bool save_xml_popup = false;
-    bool save_mjb_popup = false;
-    bool save_screenshot_popup = false;
-    bool print_model_popup = false;
-    bool print_data_popup = false;
-    bool should_exit = false;
-    // bool should_reload = false;
+    bool profiler = false;
+    bool profiler_show_iter = false;
+    bool picture_in_picture = false;
+    bool options_panel = true;
+    bool toolbar = false;
+    bool status_bar = false;
+    bool inspector_panel = true;
+    bool editor_panel = false;
+    bool full_screen = false;
     bool style_editor = false;
     bool imgui_demo = false;
+    bool implot_demo = false;
+    float editor_split = -1;
+    float explorer_split = -1;
+
+    // Controls.
     bool perturb_active = false;
-
     int speed_index = 0;
+    float cam_speed = 0.0f;
 
-    // Visibility, position and size of the left and right UI panels
-    bool show_ui_lhs = true;
-    bool show_ui_rhs = true;
-    float pos_ui_lhs[2];
-    float pos_ui_rhs[2];
-    float size_ui_lhs[2];
-    float size_ui_rhs[2];
+    // Cached data.
+    float expected_label_width = 0;
+    std::vector<std::string> camera_names;
+    std::vector<std::string> speed_names;
 
+    // Spec editing.
+    SpecPropertiesMode spec_prop_mode = SpecPropertiesMode::kSpec;
+    mjsElement* curr_element = nullptr;
+
+    // State.
+    int state_sig = 0;
+    std::vector<mjtNum> state;
+
+    // Picture-in-Picture.
+    std::vector<platform::PipState> pips;
+
+    // File dialogs.
+    enum FileDialog {
+      FileDialog_None,
+      FileDialog_Load,
+      FileDialog_SaveXml,
+      FileDialog_SaveMjb,
+      FileDialog_PrintModel,
+      FileDialog_PrintData,
+      FileDialog_SaveScreenshot,
+      NumFileDialogs,
+    };
+    FileDialog file_dialog = FileDialog_None;
+    std::string last_path[NumFileDialogs];
     char filename[1000] = "";
   };
 
-  void OnModelLoaded(std::string_view model_file);
+  // Requests that the model be loaded from the given file at the next update.
+  void RequestModelLoad(std::string model_file);
+
+  // Requests that the currently loaded model be reloaded at the next update.
+  void RequestModelReload();
+
+  // Recompiles the spec, updating the model and data.
+  void Recompile();
+
+  // Updates the currently loaded model to the given model. If model is null,
+  // then compile the spec to a model.
+  void OnModelLoaded(std::string filename, ModelKind model_kind);
+
+  void SwitchGraphicsMode(int width, int height, platform::GraphicsMode mode);
+
+  void SetLoadError(std::string error);
+  void UpdateFilePaths(const std::string& resolved_path);
+
+  void ResetPhysics();
+  void UpdatePhysics();
+  void PreStep(const mjModel* m, mjData* d);
+  void PostStep(const mjModel* m, mjData* d);
 
   void LoadSettings();
   void SaveSettings();
+  void ApplyWindowStateStorage();
 
-  void SetCamera(int idx);
+  void LoadHistory(int offset);
 
-  void ChangeSpeed(int delta);
+  void SetSpeedIndex(int idx);
 
+  void HandleWindowEvents();
   void HandleMouseEvents();
   void HandleKeyboardEvents();
 
-  void ClearProfilerData();
-  void UpdateProfilerData();
+  void ProcessPendingLoads();
 
-  void BuildGuiWithWindows();
-  void BuildGuiWithSections();
+  void SetupTheme(platform::GuiTheme theme);
 
-  void InfoGui();
-  void HelpGui();
   void MainMenuGui();
+  void ToolBarGui();
+  void StatusBarGui();
+  void HelpGui();
   void FileDialogGui();
-  void SimulationGui();
-  void PhysicsGui();
-  void RenderingGui();
-  void VisualizationGui();
-  void GroupsGui();
-  void WatchGui();
-  void SensorGui();
-  void ProfilerGui();
-  void JointsGui();
-  void ControlsGui();
+  void ModelOptionsGui();
+  void DataInspectorGui();
+  void SpecExplorerGui();
+  void SpecEditorGui();
 
-  mjModel* Model() { return physics_->GetModel(); };
-  mjData* Data() { return physics_->GetData(); };
+  mjSpec* spec() { return model_holder_->spec(); }
+  mjModel* model() { return model_holder_->model(); }
+  mjData* data() { return model_holder_->data(); }
+  bool has_spec() const { return model_holder_ && model_holder_->spec(); }
+  bool has_model() const { return model_holder_ && model_holder_->model(); }
+  bool has_data() const { return model_holder_ && model_holder_->data(); }
 
+  std::string app_title_;
   std::string ini_path_;
-  std::string model_file_;
+  // Window state storage (e.g. collapsing header open/closed state), keyed
+  // "<window name>/<id>", which ImGui does not serialize. Entries stay
+  // pending until their window is first created.
+  platform::KeyValues window_state_storage_;
+  std::string model_name_;  // Used if model_kind_ is kModelFromBuffer.
+  std::string model_path_;
+  std::string load_error_;
+  std::string step_error_;
+  std::string edit_error_;
+  platform::StepControl::PauseState last_pause_state_ =
+      platform::StepControl::PauseState::kNormalPaused;
 
-  std::unique_ptr<toolbox::Window> window_;
-  std::unique_ptr<toolbox::Renderer> renderer_;
-  std::unique_ptr<toolbox::Physics> physics_;
-  toolbox::LoadAssetFn load_asset_fn_;
+  std::optional<std::string> pending_load_;
+  std::function<void()> pending_op_;
+  bool preserve_camera_on_load_ = false;
+  ModelKind model_kind_ = kEmptyModel;
+  platform::GraphicsMode gfx_mode_ = platform::GraphicsMode::FilamentVulkan;
+
+  std::unique_ptr<platform::Window> window_;
+  std::unique_ptr<platform::Renderer> renderer_;
+  std::unique_ptr<platform::ModelHolder> model_holder_;
+
+  platform::StepControl step_control_;
+  platform::SimProfiler profiler_;
+  platform::SimHistory sim_history_;
+  platform::SimulationTimelineState timeline_;
+  platform::SpecEditor spec_editor_;
+  std::vector<std::string> search_paths_;
+  std::vector<std::byte> pixels_;
 
   mjvCamera camera_;
   mjvPerturb perturb_;
   mjvOption vis_options_;
-
-  // profiler data
-  std::vector<float> cpu_total_;
-  std::vector<float> cpu_collision_;
-  std::vector<float> cpu_prepare_;
-  std::vector<float> cpu_solve_;
-  std::vector<float> cpu_other_;
-  std::vector<float> dim_dof_;
-  std::vector<float> dim_body_;
-  std::vector<float> dim_constraint_;
-  std::vector<float> dim_sqrt_nnz_;
-  std::vector<float> dim_contact_;
-  std::vector<float> dim_iteration_;
+  mjvScene plugin_scene_;
 
   UiState ui_;
   UiTempState tmp_;

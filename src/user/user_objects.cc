@@ -25,10 +25,12 @@
 #include <deque>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <new>
 #include <optional>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -36,12 +38,11 @@
 #include <utility>
 #include <vector>
 
-#include "lodepng.h"
-#include "cc/array_safety.h"
-#include "engine/engine_passive.h"
-#include "engine/engine_support.h"
+#include "lodepng.h"  // NOLINT
 #include <mujoco/mjspec.h>
 #include <mujoco/mujoco.h>
+#include "cc/array_safety.h"
+#include "engine/engine_passive.h"
 #include "user/user_api.h"
 #include "user/user_cache.h"
 #include "user/user_model.h"
@@ -195,7 +196,6 @@ mjCError::mjCError(const mjCBase* obj, const char* msg, const char* str, int pos
   char temp[600];
 
   // init
-  warning = false;
   if (obj || msg) {
     mju::sprintf_arr(message, "Error");
   } else {
@@ -374,6 +374,7 @@ void mjCBoundingVolumeHierarchy::RemoveInactiveVolumes(int nmax) {
   bvleaf_.erase(bvleaf_.begin() + nmax, bvleaf_.end());
 }
 
+
 const mjCBoundingVolume*
 mjCBoundingVolumeHierarchy::AddBoundingVolume(int id, int contype, int conaffinity,
                                               const double* pos, const double* quat,
@@ -393,12 +394,12 @@ mjCBoundingVolumeHierarchy::AddBoundingVolume(const int* id, int contype, int co
 
 
 // create bounding volume hierarchy
-void mjCBoundingVolumeHierarchy::CreateBVH() {
+void mjCBoundingVolumeHierarchy::CreateBVH(mjCModel* model,
+                                           const mjCBase* owner) {
   std::vector<BVElement> elements;
   Make(elements);
-  MakeBVH(elements.begin(), elements.end());
+  MakeBVH(elements.begin(), elements.end(), 0, model, owner);
 }
-
 
 void mjCBoundingVolumeHierarchy::Make(std::vector<BVElement>& elements) {
   // precompute the positions of each element in the hierarchy's axes, and drop
@@ -421,8 +422,9 @@ void mjCBoundingVolumeHierarchy::Make(std::vector<BVElement>& elements) {
 
 // compute bounding volume hierarchy
 int mjCBoundingVolumeHierarchy::MakeBVH(
-  std::vector<BVElement>::iterator elements_begin,
-  std::vector<BVElement>::iterator elements_end, int lev) {
+    std::vector<BVElement>::iterator elements_begin,
+    std::vector<BVElement>::iterator elements_end, int lev, mjCModel* model,
+    const mjCBase* owner) {
   int nelements = elements_end - elements_begin;
   if (nelements == 0) {
     return -1;
@@ -522,11 +524,13 @@ int mjCBoundingVolumeHierarchy::MakeBVH(
 
   // recursive calls
   if (m > 0) {
-    child_[2*index + 0] = MakeBVH(elements_begin, elements_begin + m, lev + 1);
+    child_[2 * index + 0] =
+        MakeBVH(elements_begin, elements_begin + m, lev + 1, model, owner);
   }
 
   if (m != nelements) {
-    child_[2*index + 1] = MakeBVH(elements_begin + m, elements_end, lev + 1);
+    child_[2 * index + 1] =
+        MakeBVH(elements_begin + m, elements_end, lev + 1, model, owner);
   }
 
   // SHOULD NOT OCCUR
@@ -536,13 +540,11 @@ int mjCBoundingVolumeHierarchy::MakeBVH(
   }
 
   if (lev > mjMAXTREEDEPTH) {
-    mju_warning("max tree depth exceeded in body=%s", name_.c_str());
+    model->AddWarning("max tree depth exceeded", owner);
   }
 
   return index;
 }
-
-
 
 //------------------------- class mjCOctree implementation --------------------------------------------
 
@@ -552,6 +554,7 @@ void mjCOctree::CopyLevel(int* level) const {
   }
 }
 
+
 void mjCOctree::CopyChild(int* child) const {
   for (int i = 0; i < node_.size(); ++i) {
     for (int j = 0; j < 8; ++j) {
@@ -559,6 +562,7 @@ void mjCOctree::CopyChild(int* child) const {
     }
   }
 }
+
 
 void mjCOctree::CopyAabb(mjtNum* aabb) const {
   for (int i = 0; i < node_.size(); ++i) {
@@ -571,6 +575,7 @@ void mjCOctree::CopyAabb(mjtNum* aabb) const {
   }
 }
 
+
 void mjCOctree::CopyCoeff(mjtNum* coeff) const {
   for (int i = 0; i < node_.size(); ++i) {
     for (int j = 0; j < 8; ++j) {
@@ -579,7 +584,9 @@ void mjCOctree::CopyCoeff(mjtNum* coeff) const {
   }
 }
 
+
 void mjCOctree::SetFace(const std::vector<double>& vert, const std::vector<int>& face) {
+  face_.reserve(face.size()/3);
   for (int i = 0; i < face.size(); i += 3) {
     std::array<double, 3> v0 = {vert[3*face[i+0]], vert[3*face[i+0]+1], vert[3*face[i+0]+2]};
     std::array<double, 3> v1 = {vert[3*face[i+1]], vert[3*face[i+1]+1], vert[3*face[i+1]+2]};
@@ -606,6 +613,8 @@ void mjCOctree::Make(std::vector<Triangle>& elements) {
 
 
 void mjCOctree::CreateOctree(const double aamm[6]) {
+  Clear();
+
   double aabb[6] = {(aamm[0] + aamm[3]) / 2, (aamm[1] + aamm[4]) / 2, (aamm[2] + aamm[5]) / 2,
                     (aamm[3] - aamm[0]) / 2, (aamm[4] - aamm[1]) / 2, (aamm[5] - aamm[2]) / 2};
   double box[6] = {aabb[0] - 1.1 * aabb[3], aabb[1] - 1.1 * aabb[4], aabb[2] - 1.1 * aabb[5],
@@ -621,12 +630,302 @@ void mjCOctree::CreateOctree(const double aamm[6]) {
 }
 
 
+namespace {
+
+double pointBoxDistSq(const double* p, const mjtNum* aabb) {
+  double dist_sq = 0;
+  for (int i = 0; i < 3; ++i) {
+    double lo = aabb[i] - aabb[i + 3];
+    double hi = aabb[i] + aabb[i + 3];
+    if (p[i] < lo) {
+      dist_sq += (lo - p[i]) * (lo - p[i]);
+    } else if (p[i] > hi) {
+      dist_sq += (p[i] - hi) * (p[i] - hi);
+    }
+  }
+  return dist_sq;
+}
+
+
+// compute squared distance between point p and triangle (v0, v1, v2),
+// and return barycentric coordinates (u,v) of the closest point
+double pointTriDistSqWithUV(const double* p, const double* v0, const double* v1,
+                            const double* v2, double& out_u, double& out_v) {
+  double ab[3] = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+  double ac[3] = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
+  double ap[3] = {p[0] - v0[0], p[1] - v0[1], p[2] - v0[2]};
+
+  // the closest point on the triangle is determined by partitioning space into Voronoi regions
+  double d1 = ab[0]*ap[0] + ab[1]*ap[1] + ab[2]*ap[2];
+  double d2 = ac[0]*ap[0] + ac[1]*ap[1] + ac[2]*ap[2];
+
+  // region A (vertex v0)
+  if (d1 <= 0 && d2 <= 0) {
+    out_u = 0; out_v = 0;
+    return ap[0]*ap[0] + ap[1]*ap[1] + ap[2]*ap[2];
+  }
+
+  double bp[3] = {p[0] - v1[0], p[1] - v1[1], p[2] - v1[2]};
+  double d3 = ab[0]*bp[0] + ab[1]*bp[1] + ab[2]*bp[2];
+  double d4 = ac[0]*bp[0] + ac[1]*bp[1] + ac[2]*bp[2];
+
+  // region B (vertex v1)
+  if (d3 >= 0 && d4 <= d3) {
+    out_u = 1; out_v = 0;
+    return bp[0]*bp[0] + bp[1]*bp[1] + bp[2]*bp[2];
+  }
+
+  // region AB (edge v0-v1)
+  double vc = d1*d4 - d3*d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    double u = d1 / (d1 - d3);
+    out_u = u; out_v = 0;
+    double closest[3] = {v0[0] + u*ab[0], v0[1] + u*ab[1], v0[2] + u*ab[2]};
+    return (p[0]-closest[0])*(p[0]-closest[0]) +
+           (p[1]-closest[1])*(p[1]-closest[1]) +
+           (p[2]-closest[2])*(p[2]-closest[2]);
+  }
+
+  double cp[3] = {p[0] - v2[0], p[1] - v2[1], p[2] - v2[2]};
+  double d5 = ab[0]*cp[0] + ab[1]*cp[1] + ab[2]*cp[2];
+  double d6 = ac[0]*cp[0] + ac[1]*cp[1] + ac[2]*cp[2];
+
+  // region C (vertex v2)
+  if (d6 >= 0 && d5 <= d6) {
+    out_u = 0; out_v = 1;
+    return cp[0]*cp[0] + cp[1]*cp[1] + cp[2]*cp[2];
+  }
+
+  // region AC (edge v0-v2)
+  double vb = d5*d2 - d1*d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    double v = d2 / (d2 - d6);
+    out_u = 0; out_v = v;
+    double closest[3] = {v0[0] + v*ac[0], v0[1] + v*ac[1], v0[2] + v*ac[2]};
+    return (p[0]-closest[0])*(p[0]-closest[0]) +
+           (p[1]-closest[1])*(p[1]-closest[1]) +
+           (p[2]-closest[2])*(p[2]-closest[2]);
+  }
+
+  // region BC (edge v1-v2)
+  double va = d3*d6 - d5*d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    out_u = 1 - w; out_v = w;
+    double bc[3] = {v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]};
+    double closest[3] = {v1[0] + w*bc[0], v1[1] + w*bc[1], v1[2] + w*bc[2]};
+    return (p[0]-closest[0])*(p[0]-closest[0]) +
+           (p[1]-closest[1])*(p[1]-closest[1]) +
+           (p[2]-closest[2])*(p[2]-closest[2]);
+  }
+
+  // region ABC (inside triangle)
+  double denom = 1.0 / (va + vb + vc);
+  double u = vb * denom;
+  double v = vc * denom;
+  out_u = u; out_v = v;
+  double closest[3] = {v0[0] + u*ab[0] + v*ac[0],
+                       v0[1] + u*ab[1] + v*ac[1],
+                       v0[2] + u*ab[2] + v*ac[2]};
+  return (p[0]-closest[0])*(p[0]-closest[0]) +
+         (p[1]-closest[1])*(p[1]-closest[1]) +
+         (p[2]-closest[2])*(p[2]-closest[2]);
+}
+
+
+// query BVH for closest face to point p, return distance, face index and barycentric coordinates
+void queryClosestBVHWithFace(const mjtNum* bvh, const int* child, const int* nodeid,
+                             const double* vert, const int* face, int node_idx,
+                             const double* p, double& best_dist_sq,
+                             int& best_face, double& best_u, double& best_v) {
+  const mjtNum* aabb = &bvh[node_idx * 6];
+  if (pointBoxDistSq(p, aabb) >= best_dist_sq) return;
+
+  int left = child[node_idx * 2];
+  int right = child[node_idx * 2 + 1];
+
+  if (left == -1 && right == -1) {
+    int fi = nodeid[node_idx];
+    if (fi >= 0) {
+      const double* v0 = vert + face[fi * 3 + 0] * 3;
+      const double* v1 = vert + face[fi * 3 + 1] * 3;
+      const double* v2 = vert + face[fi * 3 + 2] * 3;
+      double u, v;
+      double dist_sq = pointTriDistSqWithUV(p, v0, v1, v2, u, v);
+      if (dist_sq < best_dist_sq) {
+        best_dist_sq = dist_sq;
+        best_face = fi;
+        best_u = u;
+        best_v = v;
+      }
+    }
+    return;
+  }
+
+  if (left >= 0) {
+    queryClosestBVHWithFace(bvh, child, nodeid, vert, face, left, p,
+                            best_dist_sq, best_face, best_u, best_v);
+  }
+  if (right >= 0) {
+    queryClosestBVHWithFace(bvh, child, nodeid, vert, face, right, p,
+                            best_dist_sq, best_face, best_u, best_v);
+  }
+}
+
+
+double querySignedDistance(const mjtNum* bvh, const int* child, const int* nodeid,
+                           int nbvh, const double* point,
+                           const double* vert, const int* face) {
+  if (nbvh == 0) {
+    return 0;
+  }
+
+  double best_dist_sq = 1e20;
+  int best_face = -1;
+  double best_u = 0, best_v = 0;
+  queryClosestBVHWithFace(bvh, child, nodeid, vert, face, 0, point,
+                          best_dist_sq, best_face, best_u, best_v);
+  double dist = std::sqrt(best_dist_sq);
+
+  double sign = 1.0;
+  if (best_face >= 0) {
+    const double* v0 = vert + face[best_face * 3 + 0] * 3;
+    const double* v1 = vert + face[best_face * 3 + 1] * 3;
+    const double* v2 = vert + face[best_face * 3 + 2] * 3;
+
+    double e1[3] = {v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]};
+    double e2[3] = {v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2]};
+    double normal[3] = {
+      e1[1]*e2[2] - e1[2]*e2[1],
+      e1[2]*e2[0] - e1[0]*e2[2],
+      e1[0]*e2[1] - e1[1]*e2[0]
+    };
+
+    double closest[3] = {
+      v0[0] + best_u*(v1[0]-v0[0]) + best_v*(v2[0]-v0[0]),
+      v0[1] + best_u*(v1[1]-v0[1]) + best_v*(v2[1]-v0[1]),
+      v0[2] + best_u*(v1[2]-v0[2]) + best_v*(v2[2]-v0[2])
+    };
+
+    double u[3] = {point[0]-closest[0], point[1]-closest[1], point[2]-closest[2]};
+    double dot = u[0]*normal[0] + u[1]*normal[1] + u[2]*normal[2];
+    double normal_len = mjuu_normvec(normal, 3);
+    double eps = 1e-12 * normal_len * dist;
+    sign = (dot > eps) ? 1.0 : -1.0;
+  }
+
+  return sign * dist;
+}
+
+}  // namespace
+
+
+double mjCBoundingVolumeHierarchy::QuerySignedDistance(
+    const double* point, const double* vert, const int* face) const {
+  return querySignedDistance(bvh_.data(), child_.data(), nodeid_.data(),
+                             nbvh_, point, vert, face);
+}
+
+
+void mjCOctree::ComputeSdfCoeffs(const double* vert, int nvert, const int* face, int nface,
+                                 const mjCBoundingVolumeHierarchy& tree) {
+  std::vector<double> coeffs(nvert_, 0.0);
+  std::vector<bool> processed(nvert_, false);
+  std::deque<int> queue;
+
+  if (NumNodes() > 0) {
+    queue.push_back(0);
+  }
+
+  while (!queue.empty()) {
+    int node_idx = queue.front();
+    queue.pop_front();
+
+    // compute SDF coefficients at the 8 vertices of the octree node
+    for (int j = 0; j < 8; ++j) {
+      int vert_id = VertId(node_idx, j);
+      if (processed[vert_id]) {
+        continue;
+      }
+      if (Hang(vert_id).empty()) {
+        // transform from octree frame (body inertial) back to mesh frame
+        double p_mesh[3];
+        mjuu_rotVecQuat(p_mesh, Vert(vert_id), iquat_);
+        p_mesh[0] += ipos_[0];
+        p_mesh[1] += ipos_[1];
+        p_mesh[2] += ipos_[2];
+
+        coeffs[vert_id] = tree.QuerySignedDistance(p_mesh, vert, face);
+      } else {
+        // hanging node: interpolate from parents
+        double sum_coeff = 0;
+        for (int dep_id : Hang(vert_id)) {
+          sum_coeff += coeffs[dep_id];
+        }
+        coeffs[vert_id] = sum_coeff / Hang(vert_id).size();
+      }
+      processed[vert_id] = true;
+    }
+
+    // add children to the queue
+    for (int child_idx : Children(node_idx)) {
+      if (child_idx != -1) {
+        queue.push_back(child_idx);
+      }
+    }
+  }
+
+  // optional Laplacian smoothing (smooths octree level transitions)
+  if (smoothing_iterations_ > 0) {
+    // build vertex neighbor graph from octree connectivity
+    std::vector<std::set<int>> neighbors(nvert_);
+    for (int i = 0; i < NumNodes(); ++i) {
+      static const int edges[12][2] = {
+        {0, 1}, {2, 3}, {4, 5}, {6, 7},
+        {0, 2}, {1, 3}, {4, 6}, {5, 7},
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}
+      };
+      for (const auto& edge : edges) {
+        int v0 = VertId(i, edge[0]);
+        int v1 = VertId(i, edge[1]);
+        neighbors[v0].insert(v1);
+        neighbors[v1].insert(v0);
+      }
+    }
+
+    // apply Laplacian smoothing
+    const double alpha = 0.2;
+    std::vector<double> sdf_new(nvert_);
+    for (int iter = 0; iter < smoothing_iterations_; ++iter) {
+      for (int i = 0; i < nvert_; ++i) {
+        if (neighbors[i].empty()) {
+          sdf_new[i] = coeffs[i];
+        } else {
+          double avg = 0;
+          for (int j : neighbors[i]) avg += coeffs[j];
+          avg /= neighbors[i].size();
+          sdf_new[i] = (1 - alpha) * coeffs[i] + alpha * avg;
+        }
+      }
+      std::swap(coeffs, sdf_new);
+    }
+  }
+
+  // copy coefficients to the octree nodes
+  for (int i = 0; i < NumNodes(); ++i) {
+    for (int j = 0; j < 8; j++) {
+      AddCoeff(i, j, coeffs[VertId(i, j)]);
+    }
+  }
+}
+
+
 static double dot2(const double* a, const double* b) {
   return a[0] * b[0] + a[1] * b[1];
 }
 
 
-// From M. Schwarz and H.-P. Seidel, "Fast Parallel Surface and Solid Voxelization on GPUs".
+// from M. Schwarz and H.-P. Seidel, "Fast Parallel Surface and Solid Voxelization on GPUs".
 static bool boxTriangle(const Triangle& v, const double aamm[6]) {
   // bounding box tests
   for (int i = 0; i < 3; i++) {
@@ -985,7 +1284,7 @@ void mjCOctree::MakeOctree(const std::vector<Triangle*>& elements, const double 
     }
 
     // skip if the box is empty
-    if (colliding.empty() || task.lev >= 6) {
+    if (colliding.empty() || task.lev >= max_depth_) {
       continue;
     }
 
@@ -1951,7 +2250,7 @@ mjCBase* mjCBody::GetObject(mjtObj type, int i) {
 
 // find object by name in given list
 template <class T>
-static T* findobject(std::string name, std::vector<T*>& list) {
+static T* findobject(const std::string& name, const std::vector<T*>& list) {
   for (unsigned int i=0; i < list.size(); i++) {
     if (list[i]->name == name) {
       return list[i];
@@ -1964,12 +2263,12 @@ static T* findobject(std::string name, std::vector<T*>& list) {
 
 
 // recursive find by name
-mjCBase* mjCBody::FindObject(mjtObj type, std::string _name, bool recursive) {
+mjCBase* mjCBody::FindObject(mjtObj type, const std::string& _name, bool recursive) const {
   mjCBase* res = 0;
 
   // check self: just in case
   if (name == _name) {
-    return this;
+    return const_cast<mjCBody*>(this);
   }
 
   // search elements of this body
@@ -2106,7 +2405,7 @@ static mjsElement* GetNextBody(const mjCBody* body, const mjsElement* child,
 
 
 // get next child of given type
-mjsElement* mjCBody::NextChild(const mjsElement* child, mjtObj type, bool recursive) {
+mjsElement* mjCBody::NextChild(const mjsElement* child, mjtObj type, bool recursive) const {
   if (type == mjOBJ_UNKNOWN) {
     if (!child) {
       throw mjCError(this, "child type must be specified if no child element is given");
@@ -2244,9 +2543,9 @@ void mjCBody::AccumulateInertia(const mjsBody* other, mjsBody* result) {
   // body_ipose = body_pose * body_ipose
   double other_ipos[3];
   double other_iquat[4];
-  mjuu_copyvec(other_ipos, other->ipos, 3);
-  mjuu_copyvec(other_iquat, other->iquat, 4);
-  mjuu_frameaccum(other_ipos, other_iquat, other->pos, other->quat);
+  mjuu_copyvec(other_ipos, other->pos, 3);
+  mjuu_copyvec(other_iquat, other->quat, 4);
+  mjuu_frameaccum(other_ipos, other_iquat, other->ipos, other->iquat);
 
   // organize data
   double mass[2] = {
@@ -2263,7 +2562,7 @@ void mjCBody::AccumulateInertia(const mjsBody* other, mjsBody* result) {
   };
   double iquat[2][4] = {
     {result->iquat[0], result->iquat[1], result->iquat[2], result->iquat[3]},
-    {other->iquat[0], other->iquat[1], other->iquat[2], other->iquat[3]}
+    {other_iquat[0], other_iquat[1], other_iquat[2], other_iquat[3]}
   };
 
   // compute total mass
@@ -2331,7 +2630,7 @@ void mjCBody::ComputeBVH() {
     tree.AddBoundingVolume(&geom->id, geom->contype, geom->conaffinity,
                            geom->pos, geom->quat, geom->aabb);
   }
-  tree.CreateBVH();
+  tree.CreateBVH(model, this);
 }
 
 
@@ -2390,7 +2689,8 @@ void mjCBody::Compile(void) {
 
   // set parentid and weldid of children
   for (int i=0; i < bodies.size(); i++) {
-    bodies[i]->weldid = (!bodies[i]->joints.empty() ? bodies[i]->id : weldid);
+    bool weld_root = !bodies[i]->joints.empty() || bodies[i]->spec.mocap;
+    bodies[i]->weldid = (weld_root ? bodies[i]->id : weldid);
   }
 
   // check and process orientation alternatives for body
@@ -2481,7 +2781,7 @@ void mjCBody::Compile(void) {
   for (int i=0; i < geoms.size(); i++) {
     contype |= geoms[i]->contype;
     conaffinity |= geoms[i]->conaffinity;
-    margin = std::max(margin, geoms[i]->margin);
+    margin = std::max(margin, geoms[i]->margin + geoms[i]->gap);
   }
 
   // check conditions for free-joint alignment
@@ -2489,8 +2789,8 @@ void mjCBody::Compile(void) {
                      joints[0]->spec.type == mjJNT_FREE  &&  // it is a free joint AND
                      bodies.empty()                      &&  // no child bodies AND
                      (joints[0]->spec.align == 1 ||          // either joint.align="true"
-                      (joints[0]->spec.align == 2        &&  // or joint.align="auto"
-                       compiler->alignfree)));                  //  and compiler->align="true"
+                      (joints[0]->spec.align == 2        &&  // or (joint.align="auto"
+                       compiler->alignfree)));               //     and compiler->align="true")
 
   // free-joint alignment, phase 1 (this body + child geoms)
   double ipos_inverse[3], iquat_inverse[4];
@@ -3571,7 +3871,7 @@ void mjCGeom::SetFluidCoefs(void) {
 
 // compute bounding box
 void mjCGeom::ComputeAABB(void) {
-  double aamm[6]; // axis-aligned bounding box in (min, max) format
+  double aamm[6];  // axis-aligned bounding box in (min, max) format
   switch (type) {
     case mjGEOM_HFIELD:
       aamm[0] = -hfield->size[0];
@@ -3663,9 +3963,15 @@ void mjCGeom::Compile(void) {
     throw mjCError(this, "hfield geom '%s' (id = %d) must have valid hfieldid", name.c_str(), id);
   }
 
-  // plane only allowed in static bodies
+  // plane only allowed in bodies with no dofs (static, including mocap)
   if (type == mjGEOM_PLANE && body->weldid != 0) {
-    throw mjCError(this, "plane only allowed in static bodies");
+    const mjCBody* weld = body;
+    while (weld->id != weld->weldid) {
+      weld = weld->parent;
+    }
+    if (!weld->spec.mocap) {
+      throw mjCError(this, "plane only allowed in static bodies");
+    }
   }
 
   // check if can collide
@@ -3752,6 +4058,24 @@ void mjCGeom::Compile(void) {
 
     // accumulate mesh frame into geom frame
     mjuu_frameaccum(pos, quat, meshpos, pmesh->GetQuatPtr());
+
+    // re-express surfacevel in the compiled geom frame, which absorbed the mesh frame
+    if (surfacevel[0] || surfacevel[1] || surfacevel[2] ||
+        surfacevel[3] || surfacevel[4] || surfacevel[5]) {
+      // angular origin moves to meshpos: linear part gains omega x meshpos
+      double wxp[3];
+      mjuu_crossvec(wxp, surfacevel+3, meshpos);
+      mjuu_addtovec(surfacevel, wxp, 3);
+
+      // rotate both parts by the inverse mesh orientation
+      const double* mq = pmesh->GetQuatPtr();
+      double invq[4] = {mq[0], -mq[1], -mq[2], -mq[3]};
+      double tmp[3];
+      mjuu_rotVecQuat(tmp, surfacevel, invq);
+      mjuu_copyvec(surfacevel, tmp, 3);
+      mjuu_rotVecQuat(tmp, surfacevel+3, invq);
+      mjuu_copyvec(surfacevel+3, tmp, 3);
+    }
   }
 
   // check size parameters
@@ -4116,15 +4440,23 @@ void mjCCamera::Compile(void) {
                    name.c_str(), id, fovy);
   }
 
-  // check that specs are not duplicated
-  if ((principal_length[0] && principal_pixel[0]) ||
-      (principal_length[1] && principal_pixel[1])) {
-    throw mjCError(this, "principal length duplicated in camera");
+  // check for advanced camera intrinsic parameters
+  bool has_intrinsic = focal_length[0]     || focal_length[1]     ||
+                       focal_pixel[0]      || focal_pixel[1]      ||
+                       principal_length[0] || principal_length[1] ||
+                       principal_pixel[0]  || principal_pixel[1];
+  bool has_sensorsize = sensor_size[0] > 0 && sensor_size[1] > 0;
+
+  // intrinsic params require sensorsize
+  if (has_intrinsic && !has_sensorsize) {
+    throw mjCError(this, "focal/principal require sensorsize in camera '%s' (id = %d)",
+                   name.c_str(), id);
   }
 
-  if ((focal_length[0] && focal_pixel[0]) ||
-      (focal_length[1] && focal_pixel[1])) {
-    throw mjCError(this, "focal length duplicated in camera");
+  // sensorsize requires resolution
+  if (has_sensorsize && (resolution[0] <= 0 || resolution[1] <= 0)) {
+    throw mjCError(this, "sensorsize requires positive resolution in camera '%s' (id = %d)",
+                   name.c_str(), id);
   }
 
   // compute number of pixels per unit length
@@ -4134,11 +4466,11 @@ void mjCCamera::Compile(void) {
       (float)resolution[1] / sensor_size[1],
     };
 
-    // defaults are zero, so only one term in each sum is nonzero
-    intrinsic[0] = focal_pixel[0] / pixel_density[0] + focal_length[0];
-    intrinsic[1] = focal_pixel[1] / pixel_density[1] + focal_length[1];
-    intrinsic[2] = principal_pixel[0] / pixel_density[0] + principal_length[0];
-    intrinsic[3] = principal_pixel[1] / pixel_density[1] + principal_length[1];
+    // pixel values override length values when both are specified
+    intrinsic[0] = focal_pixel[0] ? focal_pixel[0] / pixel_density[0] : focal_length[0];
+    intrinsic[1] = focal_pixel[1] ? focal_pixel[1] / pixel_density[1] : focal_length[1];
+    intrinsic[2] = principal_pixel[0] ? principal_pixel[0] / pixel_density[0] : principal_length[0];
+    intrinsic[3] = principal_pixel[1] ? principal_pixel[1] / pixel_density[1] : principal_length[1];
 
     // fovy with principal point at (0, 0)
     fovy = std::atan2(sensor_size[1]/2, intrinsic[1]) * 360.0 / mjPI;
@@ -4269,6 +4601,11 @@ void mjCLight::Compile(void) {
     throw mjCError(this, "zero direction in light");
   }
 
+  // check softness range
+  if (softness < 0 || softness > 1) {
+    throw mjCError(this, "light softness must be in [0, 1]");
+  }
+
   // get targetbodyid and texid
   ResolveReferences(model);
 }
@@ -4360,9 +4697,6 @@ void mjCHField::NameSpace(const mjCModel* m) {
     name = mjuu_stripext(stripped);
   }
   mjCBase::NameSpace(m);
-  if (modelfiledir_.empty()) {
-    modelfiledir_ = FilePath(m->spec_modelfiledir_);
-  }
 }
 
 
@@ -4490,15 +4824,12 @@ void mjCHField::Compile(const mjVFS* vfs) {
       throw mjCError(this, "unsupported content type: '%s'", asset_type.c_str());
     }
 
-    // copy paths from model if not already defined
-    if (modelfiledir_.empty()) {
-      modelfiledir_ = FilePath(model->modelfiledir_);
-    }
     mujoco::user::FilePath meshdir_;
     meshdir_ = FilePath(mjs_getString(compiler->meshdir));
 
     FilePath filename = meshdir_ + FilePath(file_);
-    mjResource* resource = LoadResource(modelfiledir_.Str(), filename.Str(), vfs);
+    mjSpec* owning_spec = model->FindSpec(compiler);
+    mjResource* resource = LoadResource(owning_spec->modelfiledir->c_str(), filename.Str(), vfs);
 
     struct CachedHField {
       int nrow, ncol;
@@ -4657,9 +4988,6 @@ void mjCTexture::NameSpace(const mjCModel* m) {
     name = mjuu_stripext(stripped);
   }
   mjCBase::NameSpace(m);
-  if (modelfiledir_.empty()) {
-    modelfiledir_ = FilePath(m->spec_modelfiledir_);
-  }
 }
 
 
@@ -4817,7 +5145,7 @@ void mjCTexture::BuiltinCube(void) {
   if (w > std::numeric_limits<int>::max() / w) {
     throw mjCError(this, "Cube texture width is too large.");
   }
-  int ww = width*width;
+  mjtSize ww = width*width;
 
   // convert fixed colors
   for (int j = 0; j < 3; j++) {
@@ -4830,7 +5158,7 @@ void mjCTexture::BuiltinCube(void) {
 
   // gradient
   if (builtin == mjBUILTIN_GRADIENT) {
-    if (ww > std::numeric_limits<int>::max() / 18) {
+    if (ww > std::numeric_limits<std::int64_t>::max() / 18) {
       throw mjCError(this, "Gradient texture width is too large.");
     }
     for (int r = 0; r < w; r++) {
@@ -4957,6 +5285,7 @@ void mjCTexture::LoadKTX(mjResource* resource, std::vector<std::byte>& image,
 
   w = buffer_sz;
   h = 1;
+  nchannel = 1;
   is_srgb = false;
 
   image.resize(buffer_sz);
@@ -4964,43 +5293,6 @@ void mjCTexture::LoadKTX(mjResource* resource, std::vector<std::byte>& image,
 }
 
 // load custom file
-void mjCTexture::LoadCustom(mjResource* resource, std::vector<std::byte>& image,
-                            unsigned int& w, unsigned int& h, bool& is_srgb) {
-  const void* buffer = 0;
-  int buffer_sz = mju_readResource(resource, &buffer);
-
-  // still not found
-  if (buffer_sz < 0) {
-    throw mjCError(this, "could not read texture file '%s'", resource->name);
-  } else if (!buffer_sz) {
-    throw mjCError(this, "texture file is empty: '%s'", resource->name);
-  }
-
-
-  // read dimensions
-  int* pint = (int*)buffer;
-  w = pint[0];
-  h = pint[1];
-
-  // assume linear color space
-  is_srgb = false;
-
-  // check dimensions
-  if (w < 1 || h < 1) {
-    throw mjCError(this, "Non-PNG texture, assuming custom binary file format,\n"
-                         "non-positive texture dimensions in file '%s'", resource->name);
-  }
-
-  // check buffer size
-  if (buffer_sz != 2*sizeof(int) + w*h*3*sizeof(char)) {
-    throw mjCError(this, "Non-PNG texture, assuming custom binary file format,\n"
-                         "unexpected file size in file '%s'", resource->name);
-  }
-
-  // allocate and copy
-  image.resize(w*h*3);
-  memcpy(image.data(), (void*)(pint+2), w*h*3*sizeof(char));
-}
 
 void mjCTexture::FlipIfNeeded(std::vector<std::byte>& image, unsigned int w,
                               unsigned int h) {
@@ -5069,17 +5361,13 @@ void mjCTexture::LoadFlip(std::string filename, const mjVFS* vfs,
 
   std::string asset_type = GetAssetContentType(filename, content_type_);
 
-  // fallback to custom
-  if (asset_type.empty()) {
-    asset_type = "image/vnd.mujoco.texture";
-  }
-
-  if (asset_type != "image/png" && asset_type != "image/ktx" && asset_type != "image/vnd.mujoco.texture") {
+  if (asset_type != "image/png" && asset_type != "image/ktx") {
     throw mjCError(this, "unsupported content type: '%s'", asset_type.c_str());
   }
 
   // try loading from cache
-  mjResource* resource = LoadResource(modelfiledir_.Str(), filename, vfs);
+  mjSpec* owning_spec = model->FindSpec(compiler);
+  mjResource* resource = LoadResource(owning_spec->modelfiledir->c_str(), filename, vfs);
   if (cache && cache->PopulateData(GetCacheId(resource, asset_type), resource, callback)) {
     mju_closeResource(resource);
     return;
@@ -5093,8 +5381,6 @@ void mjCTexture::LoadFlip(std::string filename, const mjVFS* vfs,
         throw mjCError(this, "cannot flip KTX textures");
       }
       LoadKTX(resource, image, w, h, is_srgb);
-    } else {
-      LoadCustom(resource, image, w, h, is_srgb);
     }
   } catch(mjCError err) {
     mju_closeResource(resource);
@@ -5168,7 +5454,7 @@ void mjCTexture::LoadCubeSingle(std::string filename, const mjVFS* vfs) {
 
   // allocate data
   std::int64_t size = static_cast<std::int64_t>(width)*height;
-  if (size >= std::numeric_limits<int>::max() / 3 || size <= 0) {
+  if (size >= std::numeric_limits<std::int64_t>::max() / 3 || size <= 0) {
     throw mjCError(this, "Cube texture too large");
   }
   try {
@@ -5285,7 +5571,7 @@ void mjCTexture::LoadCubeSeparate(const mjVFS* vfs) {
         }
         height = 6*width;
         std::int64_t size = static_cast<std::int64_t>(width)*height;
-        if (size >= std::numeric_limits<int>::max() / 3 || size <= 0) {
+        if (size >= std::numeric_limits<mjtSize>::max() / 3 || size <= 0) {
           throw mjCError(this, "PNG texture too large");
         }
         try {
@@ -5331,10 +5617,6 @@ void mjCTexture::LoadCubeSeparate(const mjVFS* vfs) {
 void mjCTexture::Compile(const mjVFS* vfs) {
   CopyFromSpec();
 
-  // copy paths from model if not already defined
-  if (modelfiledir_.empty()) {
-    modelfiledir_ = FilePath(model->modelfiledir_);
-  }
   mujoco::user::FilePath texturedir_;
   texturedir_ = FilePath(mjs_getString(compiler->texturedir));
 
@@ -5370,7 +5652,7 @@ void mjCTexture::Compile(const mjVFS* vfs) {
     }
 
     std::int64_t size = static_cast<std::int64_t>(width)*height;
-    if (size >= std::numeric_limits<int>::max() / nchannel || size <= 0) {
+    if (size >= std::numeric_limits<int64_t>::max() / nchannel || size <= 0) {
       throw mjCError(this, "Builtin texture too large");
     }
     // allocate data
@@ -5987,7 +6269,7 @@ void mjCEquality::ResolveReferences(const mjCModel* m) {
     object_type = mjOBJ_JOINT;
   } else if (type == mjEQ_TENDON) {
     object_type = mjOBJ_TENDON;
-  } else if (type == mjEQ_FLEX) {
+  } else if (type == mjEQ_FLEX || type == mjEQ_FLEXVERT || type == mjEQ_FLEXSTRAIN) {
     object_type = mjOBJ_FLEX;
   } else {
     throw mjCError(this, "invalid type in equality constraint");
@@ -6044,7 +6326,8 @@ void mjCEquality::Compile(void) {
   ResolveReferences(model);
 
   // make sure flex is not rigid
-  if (type == mjEQ_FLEX && model->Flexes()[obj1id]->rigid) {
+  if ((type == mjEQ_FLEX || type == mjEQ_FLEXVERT || type == mjEQ_FLEXSTRAIN) &&
+      model->Flexes()[obj1id]->rigid) {
     throw mjCError(this, "rigid flex '%s' in equality constraint %d", name1_.c_str(), id);
   }
 }
@@ -6136,10 +6419,11 @@ void mjCTendon::CopyFromSpec() {
   material_ = spec_material_;
   userdata_ = spec_userdata_;
 
-  // clear precompiled
+  // propagate model pointer to wraps and clear precompiled
   for (int i=0; i < path.size(); i++) {
-    if (path[i]->type == mjWRAP_CYLINDER) {
-      path[i]->type = mjWRAP_SPHERE;
+    path[i]->model = model;
+    if (path[i]->Type() == mjWRAP_CYLINDER) {
+      path[i]->spec.type = mjWRAP_SPHERE;
     }
   }
 }
@@ -6175,7 +6459,7 @@ void mjCTendon::WrapSite(std::string wrapname, std::string_view wrapinfo) {
   wrap->info = wrapinfo;
 
   // set parameters, add to path
-  wrap->type = mjWRAP_SITE;
+  wrap->spec.type = mjWRAP_SITE;
   wrap->name = wrapname;
   wrap->id = (int)path.size();
   path.push_back(wrap);
@@ -6190,7 +6474,7 @@ void mjCTendon::WrapGeom(std::string wrapname, std::string sidesite, std::string
   wrap->info = wrapinfo;
 
   // set parameters, add to path
-  wrap->type = mjWRAP_SPHERE;         // replace with cylinder later if needed
+  wrap->spec.type = mjWRAP_SPHERE;         // replace with cylinder later if needed
   wrap->name = wrapname;
   wrap->sidesite = sidesite;
   wrap->id = (int)path.size();
@@ -6206,7 +6490,7 @@ void mjCTendon::WrapJoint(std::string wrapname, double coef, std::string_view wr
   wrap->info = wrapinfo;
 
   // set parameters, add to path
-  wrap->type = mjWRAP_JOINT;
+  wrap->spec.type = mjWRAP_JOINT;
   wrap->name = wrapname;
   wrap->prm = coef;
   wrap->id = (int)path.size();
@@ -6222,7 +6506,7 @@ void mjCTendon::WrapPulley(double divisor, std::string_view wrapinfo) {
   wrap->info = wrapinfo;
 
   // set parameters, add to path
-  wrap->type = mjWRAP_PULLEY;
+  wrap->spec.type = mjWRAP_PULLEY;
   wrap->prm = divisor;
   wrap->id = (int)path.size();
   path.push_back(wrap);
@@ -6253,18 +6537,22 @@ void mjCTendon::ResolveReferences(const mjCModel* m) {
   for (int i=0; i < path.size(); i++) {
     std::string pname = path[i]->name;
     std::string psidesite = path[i]->sidesite;
-    if (path[i]->type == mjWRAP_PULLEY) {
+    if (path[i]->Type() == mjWRAP_PULLEY) {
       npulley++;
     }
     try {
       // look for wrapped element with namespace
       path[i]->name = prefix + pname + suffix;
-      path[i]->sidesite = prefix + psidesite + suffix;
+      if (!psidesite.empty()) {
+        path[i]->sidesite = prefix + psidesite + suffix;
+      }
       path[i]->ResolveReferences(m);
     } catch(mjCError) {
       // remove namespace from wrap names
       path[i]->name = pname;
-      path[i]->sidesite = psidesite;
+      if (!psidesite.empty()) {
+        path[i]->sidesite = psidesite;
+      }
       path[i]->ResolveReferences(m);
       nfailure++;
     }
@@ -6280,6 +6568,11 @@ void mjCTendon::ResolveReferences(const mjCModel* m) {
 
 // compiler
 void mjCTendon::Compile(void) {
+  // compile all wraps in the path
+  for (mjCWrap* wrap : path) {
+    wrap->Compile();
+  }
+
   CopyFromSpec();
 
   // resize userdata
@@ -6297,7 +6590,7 @@ void mjCTendon::Compile(void) {
   }
 
   // determine type
-  bool spatial = (path[0]->type != mjWRAP_JOINT);
+  bool spatial = (path[0]->Type() != mjWRAP_JOINT);
 
   // require at least two objects in spatial path
   if (spatial && sz < 2) {
@@ -6318,7 +6611,7 @@ void mjCTendon::Compile(void) {
     // fixed
     if (!spatial) {
       // make sure all objects are joints
-      if (path[i]->type != mjWRAP_JOINT) {
+      if (path[i]->Type() != mjWRAP_JOINT) {
         throw mjCError(this, "tendon '%s' (id = %d): spatial object found in fixed path at pos %d",
                        name.c_str(), id, i);
       }
@@ -6332,10 +6625,10 @@ void mjCTendon::Compile(void) {
                         name.c_str(), id);
       }
 
-      switch (path[i]->type) {
+      switch (path[i]->Type()) {
         case mjWRAP_PULLEY:
           // pulley should not follow other pulley
-          if (i > 0 && path[i-1]->type == mjWRAP_PULLEY) {
+          if (i > 0 && path[i-1]->Type() == mjWRAP_PULLEY) {
             throw mjCError(this, "tendon '%s' (id = %d): consecutive pulleys (pos %d)",
                            name.c_str(), id, i);
           }
@@ -6348,15 +6641,15 @@ void mjCTendon::Compile(void) {
 
         case mjWRAP_SITE:
           // site needs a neighbor that is not a pulley
-          if ((i == 0 || path[i-1]->type == mjWRAP_PULLEY) &&
-              (i == sz-1 || path[i+1]->type == mjWRAP_PULLEY)) {
+          if ((i == 0 || path[i-1]->Type() == mjWRAP_PULLEY) &&
+              (i == sz-1 || path[i+1]->Type() == mjWRAP_PULLEY)) {
             throw mjCError(this,
                            "tendon '%s' (id = %d): site %d needs a neighbor that is not a pulley",
                            name.c_str(), id, i);
           }
 
           // site cannot be repeated
-          if (i < sz-1 && path[i+1]->type == mjWRAP_SITE && path[i]->obj->id == path[i+1]->obj->id) {
+          if (i < sz-1 && path[i+1]->Type() == mjWRAP_SITE && path[i]->obj->id == path[i+1]->obj->id) {
             throw mjCError(this,
                            "tendon '%s' (id = %d): site %d is repeated",
                            name.c_str(), id, i);
@@ -6367,7 +6660,7 @@ void mjCTendon::Compile(void) {
         case mjWRAP_SPHERE:
         case mjWRAP_CYLINDER:
           // geom must be bracketed by sites
-          if (i == 0 || i == sz-1 || path[i-1]->type != mjWRAP_SITE || path[i+1]->type != mjWRAP_SITE) {
+          if (i == 0 || i == sz-1 || path[i-1]->Type() != mjWRAP_SITE || path[i+1]->Type() != mjWRAP_SITE) {
             throw mjCError(this,
                            "tendon '%s' (id = %d): geom at pos %d not bracketed by sites",
                            name.c_str(), id, i);
@@ -6442,7 +6735,7 @@ mjCWrap::mjCWrap(mjCModel* _model, mjCTendon* _tendon) {
   tendon = _tendon;
 
   // clear variables
-  type = mjWRAP_NONE;
+  spec.type = mjWRAP_NONE;
   obj = nullptr;
   sideid = -1;
   prm = 0;
@@ -6450,6 +6743,7 @@ mjCWrap::mjCWrap(mjCModel* _model, mjCTendon* _tendon) {
 
   // point to local
   PointToLocal();
+  CopyFromSpec();
 }
 
 
@@ -6478,7 +6772,9 @@ void mjCWrap::PointToLocal() {
   spec.info = &info;
 }
 
-
+void mjCWrap::CopyFromSpec() {
+  *static_cast<mjsWrap*>(this) = spec;
+}
 
 void mjCWrap::NameSpace(const mjCModel* m) {
   name = m->prefix + name + m->suffix;
@@ -6487,13 +6783,15 @@ void mjCWrap::NameSpace(const mjCModel* m) {
   }
 }
 
-
+void mjCWrap::Compile(void) {
+  CopyFromSpec();
+}
 
 void mjCWrap::ResolveReferences(const mjCModel* m) {
   mjCBase *pside;
 
   // handle wrap object types
-  switch (type) {
+  switch (spec.type) {
     case mjWRAP_JOINT:                        // joint
       // find joint by name
       obj = m->FindObject(mjOBJ_JOINT, name);
@@ -6516,7 +6814,7 @@ void mjCWrap::ResolveReferences(const mjCModel* m) {
 
       // set/check geom type
       if (((mjCGeom*)obj)->type == mjGEOM_CYLINDER) {
-        type = mjWRAP_CYLINDER;
+        spec.type = mjWRAP_CYLINDER;
       } else if (((mjCGeom*)obj)->type != mjGEOM_SPHERE) {
         throw mjCError(this,
                        "geom '%s' in tendon %d, wrap %d is not sphere or cylinder",
@@ -6597,6 +6895,14 @@ mjCActuator::mjCActuator(mjCModel* _model, mjCDef* _def) {
   // no previous state when an actuator is created
   actadr_ = -1;
   actdim_ = -1;
+
+  // input and output blocks, set by mjCModel; all actuator types are currently 1x1
+  ctrladr_ = -1;
+  ctrlnum_ = 1;
+  ctrlspec_ = 0;
+  outadr_ = -1;
+  outnum_ = 1;
+  so3_ = false;
 }
 
 
@@ -6787,6 +7093,12 @@ void mjCActuator::ResolveReferences(const mjCModel* m) {
 void mjCActuator::Compile(void) {
   CopyFromSpec();
 
+  // reset input/output block widths, resolved below
+  ctrlnum_ = 1;
+  ctrlspec_ = 0;
+  outnum_ = 1;
+  so3_ = false;
+
   // resize userdata
   if (userdata_.size() > model->nuser_actuator) {
     throw mjCError(this, "user has more values than nuser_actuator in actuator '%s' (id = %d)",
@@ -6803,13 +7115,198 @@ void mjCActuator::Compile(void) {
   // find transmission target in object arrays
   ResolveReferences(model);
 
+  // SO3 geodesic servo: validate and resolve the SO3 transmission
+  if (gaintype == mjGAIN_SO3 || biastype == mjBIAS_SO3) {
+    if (gaintype != mjGAIN_SO3 || biastype != mjBIAS_SO3) {
+      throw mjCError(this, "gaintype and biastype must both be 'so3' in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    if (dyntype != mjDYN_NONE && dyntype != mjDYN_INTEGRATOR) {
+      throw mjCError(this, "so3 requires dyntype 'none' or 'integrator' in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    if (gainprm[0] != -biasprm[1]) {
+      throw mjCError(this, "so3 requires gainprm[0] == -biasprm[1] in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    if (trntype == mjTRN_SITE) {
+      if (refsite_.empty()) {
+        throw mjCError(this, "so3 site transmission requires refsite in actuator '%s' (id = %d)",
+                       name.c_str(), id);
+      }
+    } else if (trntype == mjTRN_JOINT) {
+      if (((mjCJoint*)ptarget)->spec.type != mjJNT_BALL) {
+        throw mjCError(this, "so3 joint transmission requires a ball joint in actuator '%s' "
+                       "(id = %d)", name.c_str(), id);
+      }
+    } else {
+      throw mjCError(this, "so3 requires site or ball joint transmission in actuator '%s' "
+                     "(id = %d)", name.c_str(), id);
+    }
+
+    // integrator variant: activation is the 3D orientation setpoint
+    if (dyntype == mjDYN_INTEGRATOR) {
+      if (actdim > 0 && actdim != 3) {
+        throw mjCError(this, "so3 integrator requires actdim 3 in actuator '%s' (id = %d)",
+                       name.c_str(), id);
+      }
+      actdim = 3;
+
+      // the act setpoint is re-anchored to a bounded representative at integration time
+      if (actlimited == mjLIMITED_TRUE && actrange[0] == 0 && actrange[1] == 0) {
+        actlimited = mjLIMITED_FALSE;
+      }
+    }
+
+    // input chart: expmap (3 controls, default) or quat (4 controls)
+    ctrlspec_ = ctrlspec ? ctrlspec : mjCHART_EXPMAP;
+    if (ctrlspec_ == mjCHART_QUAT) {
+      if (dyntype != mjDYN_NONE) {
+        throw mjCError(this, "so3 quat input requires dyntype 'none' in actuator '%s' (id = %d)",
+                       name.c_str(), id);
+      }
+    } else if (ctrlspec_ != mjCHART_EXPMAP) {
+      throw mjCError(this, "so3 input must be expmap or quat in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+
+    // force is clamped on the norm of the output torque: lower bound must be 0
+    if (is_forcelimited() && forcerange[0] != 0) {
+      throw mjCError(this, "so3 forcerange bounds the force norm, lower bound must be 0 in "
+                     "actuator '%s' (id = %d)", name.c_str(), id);
+    }
+
+    // input and output blocks
+    ctrlnum_ = ctrlspec_ == mjCHART_QUAT ? 4 : 3;
+    outnum_ = 3;
+    so3_ = true;
+  }
+
+  // PID servo: validate and resolve input block
+  if (gaintype == mjGAIN_PID) {
+    if (biastype != mjBIAS_AFFINE) {
+      throw mjCError(this, "pid requires biastype 'affine' in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    if (dyntype != mjDYN_NONE && dyntype != mjDYN_PID) {
+      throw mjCError(this, "pid requires dyntype 'none' or 'pid' in actuator '%s' "
+                     "(id = %d)", name.c_str(), id);
+    }
+    if (dyntype == mjDYN_NONE && gainprm[0]) {
+      throw mjCError(this, "ki (gainprm[0]) requires dyntype 'pid' in actuator '%s' "
+                     "(id = %d)", name.c_str(), id);
+    }
+    if (trntype == mjTRN_BODY) {
+      throw mjCError(this, "pid cannot use body transmission, actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+
+    // controller states, slot order [slew, integral]: gated on slewmax (dynprm[1]) and ki
+    if (dyntype == mjDYN_PID) {
+      if (dynprm[0] < 0) {
+        throw mjCError(this, "imax (dynprm[0]) must be non-negative in actuator '%s' (id = %d)",
+                       name.c_str(), id);
+      }
+      if (dynprm[1] < 0) {
+        throw mjCError(this, "slewmax (dynprm[1]) must be non-negative in actuator '%s' (id = %d)",
+                       name.c_str(), id);
+      }
+      int nslot = (dynprm[1] > 0) + (gainprm[0] > 0);
+      if (actdim > 0 && actdim != nslot) {
+        throw mjCError(this, "pid controller states require matching actdim in actuator '%s' "
+                       "(id = %d)", name.c_str(), id);
+      }
+      actdim = nslot;
+    }
+
+    // input block: any subset of [pos, vel, ff], default [pos, vel]
+    ctrlspec_ = ctrlspec ? ctrlspec : (mjINPUT_POS | mjINPUT_VEL);
+    if (ctrlspec_ & ~(mjINPUT_POS | mjINPUT_VEL | mjINPUT_FF)) {
+      throw mjCError(this, "pid inputs are a subset of [pos, vel, ff] in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    if (dyntype == mjDYN_PID && !(ctrlspec_ & mjINPUT_POS)) {
+      throw mjCError(this, "pid controller states require the pos input in actuator '%s' (id = %d)",
+                     name.c_str(), id);
+    }
+    ctrlnum_ = !!(ctrlspec_ & mjINPUT_POS) + !!(ctrlspec_ & mjINPUT_VEL) +
+               !!(ctrlspec_ & mjINPUT_FF);
+  }
+
+  // DC motor: resolve input block (default: raw voltage command)
+  if (gaintype == mjGAIN_DCMOTOR) {
+    ctrlspec_ = ctrlspec ? ctrlspec : mjINPUT_VOLTAGE;
+    if (ctrlspec_ != mjINPUT_NONE &&
+        (ctrlspec_ & ~(mjINPUT_POS | mjINPUT_VEL | mjINPUT_FF | mjINPUT_VOLTAGE))) {
+      throw mjCError(this, "dcmotor inputs are 'none' or a subset of [pos, vel, ff, voltage] in "
+                     "actuator '%s' (id = %d)", name.c_str(), id);
+    }
+
+    // controller inputs engage the torque-space controller, which divides by the motor constant
+    int controller = ctrlspec_ == mjINPUT_NONE ?
+                     0 : ctrlspec_ & (mjINPUT_POS | mjINPUT_VEL | mjINPUT_FF);
+    if (controller && gainprm[1] <= 0) {
+      throw mjCError(this, "dcmotor controller inputs require a positive motor constant in "
+                     "actuator '%s' (id = %d)", name.c_str(), id);
+    }
+    if (!controller && (gainprm[4] || gainprm[5] || gainprm[6])) {
+      throw mjCError(this, "dcmotor controller gains require a controller input [pos, vel, ff] "
+                     "in actuator '%s' (id = %d)", name.c_str(), id);
+    }
+    if (gainprm[5] > 0 && !(ctrlspec_ & mjINPUT_POS)) {
+      throw mjCError(this, "dcmotor integral gain requires the pos input in actuator '%s' "
+                     "(id = %d)", name.c_str(), id);
+    }
+    ctrlnum_ = !!(ctrlspec_ & mjINPUT_POS) + !!(ctrlspec_ & mjINPUT_VEL) +
+               !!(ctrlspec_ & mjINPUT_FF) + !!(ctrlspec_ & mjINPUT_VOLTAGE);
+    if (!controller && dynprm[7] > 0) {
+      throw mjCError(this, "dcmotor slew rate limiting requires a controller input [pos, vel, "
+                     "ff] in actuator '%s' (id = %d)", name.c_str(), id);
+    }
+  }
+
+  // pid dynamics are pid-only
+  if (dyntype == mjDYN_PID && gaintype != mjGAIN_PID) {
+    throw mjCError(this, "dyntype 'pid' requires gaintype 'pid', actuator '%s' (id = %d)",
+                   name.c_str(), id);
+  }
+
+  // input signature selection is so3-, pid- or dcmotor-only
+  if (ctrlspec && gaintype != mjGAIN_SO3 && gaintype != mjGAIN_PID &&
+      gaintype != mjGAIN_DCMOTOR) {
+    throw mjCError(this, "input is only available for so3, pid and dcmotor actuators, "
+                   "actuator '%s' (id = %d)", name.c_str(), id);
+  }
+
+  // check damping/armature only valid for joint and tendon transmission
+  bool has_damping = false;
+  for (int i = 0; i < mjNPOLY+1; i++) {
+    if (damping[i] != 0) {
+      has_damping = true;
+      break;
+    }
+  }
+  if (has_damping &&
+      trntype != mjTRN_JOINT && trntype != mjTRN_JOINTINPARENT && trntype != mjTRN_TENDON) {
+    throw mjCError(this,
+                   "damping requires joint or tendon transmission in actuator '%s' (id = %d)",
+                   name.c_str(), id);
+  }
+  if (armature != 0 &&
+      trntype != mjTRN_JOINT && trntype != mjTRN_JOINTINPARENT && trntype != mjTRN_TENDON) {
+    throw mjCError(this,
+                   "armature requires joint or tendon transmission in actuator '%s' (id = %d)",
+                   name.c_str(), id);
+  }
+
   // handle inheritrange
-  if (gaintype == mjGAIN_FIXED && biastype == mjBIAS_AFFINE &&
-      gainprm[0] == -biasprm[1] && inheritrange > 0) {
+  if (((gaintype == mjGAIN_FIXED && gainprm[0] == -biasprm[1]) || gaintype == mjGAIN_PID) &&
+      biastype == mjBIAS_AFFINE && inheritrange > 0) {
     // semantic of actuator is the same as transmission, inheritrange is applicable
     double* range;
-    if (dyntype == mjDYN_NONE || dyntype == mjDYN_FILTEREXACT) {
-      // position actuator
+    if (dyntype == mjDYN_NONE || dyntype == mjDYN_FILTEREXACT ||
+        dyntype == mjDYN_PID) {
+      // position or pid actuator: range applies to the position input
       range = ctrlrange;
     } else if (dyntype == mjDYN_INTEGRATOR) {
       // intvelocity actuator
@@ -6877,20 +7374,26 @@ void mjCActuator::Compile(void) {
 
   // check and set actdim
   if (!plugin.active) {
-    if (actdim > 1 && dyntype != mjDYN_USER) {
-      throw mjCError(this, "actdim > 1 is only allowed for dyntype 'user' in actuator");
+    if (actdim > 1 && dyntype != mjDYN_USER && dyntype != mjDYN_DCMOTOR && !so3_) {
+      throw mjCError(this, "actdim > 1 is only allowed for dyntype 'user' and 'dcmotor'");
     }
     if (actdim == 1 && dyntype == mjDYN_NONE) {
       throw mjCError(this, "invalid actdim 1 in stateless actuator");
     }
-    if (actdim == 0 && dyntype != mjDYN_NONE) {
+    if (actdim == 0 && dyntype != mjDYN_NONE && dyntype != mjDYN_DCMOTOR) {
       throw mjCError(this, "invalid actdim 0 in stateful actuator");
     }
   }
 
-  // set actdim
+  // set actdim to 1 if it is unset and type is standard one-activation dyntype
   if (actdim < 0) {
-    actdim = (dyntype != mjDYN_NONE);
+    actdim = (dyntype != mjDYN_NONE && dyntype != mjDYN_DCMOTOR);
+  }
+
+  // DC motor always uses actearly
+  if (dyntype == mjDYN_DCMOTOR && !actearly) {
+    throw mjCError(this, "actearly cannot be false for DC motor actuator '%s' (id = %d)",
+                   name.c_str(), id);
   }
 
   // check muscle parameters
@@ -6940,6 +7443,43 @@ void mjCActuator::Compile(void) {
     const mjpPlugin* pplugin = mjp_getPluginAtSlot(plugin_instance->plugin_slot);
     if (!(pplugin->capabilityflags & mjPLUGIN_ACTUATOR)) {
       throw mjCError(this, "plugin '%s' does not support actuators", pplugin->name);
+    }
+  }
+
+  // validate delay
+  if (delay > 0 && nsample <= 0) {
+    throw mjCError(this, "setting delay > 0 without a history buffer");
+  }
+  if ((delay > 0 || nsample > 0) && ctrlnum_ == 0) {
+    throw mjCError(this, "history and delay require an input in actuator '%s' (id = %d)",
+                   name.c_str(), id);
+  }
+
+  // nsample is limited to 2^24 because the cursor is stored as an mjtNum, which may be a float
+  // single-precision floats can represent all integers up to 2^24 exactly
+  if (nsample > 16777216) {
+    throw mjCError(this, "at most 2^24 samples in history buffer, got %d", nullptr, nsample);
+  }
+
+  // resolve per-input control ranges: broadcast ctrlrange, pid overrides vel and ff
+  for (int j=0; j < ctrlnum_ && j < 4; j++) {
+    ctrllimiteds_[j] = (mjtByte)is_ctrllimited();
+    ctrlranges_[j][0] = ctrlrange[0];
+    ctrlranges_[j][1] = ctrlrange[1];
+  }
+  if (gaintype == mjGAIN_PID) {
+    // present inputs pack in canonical order [pos, vel, ff]; pos keeps the ctrlrange broadcast
+    int j = ctrlspec_ & mjINPUT_POS ? 1 : 0;
+    if (ctrlspec_ & mjINPUT_VEL) {
+      ctrllimiteds_[j] = velrange[0] < velrange[1];
+      ctrlranges_[j][0] = velrange[0];
+      ctrlranges_[j][1] = velrange[1];
+      j++;
+    }
+    if (ctrlspec_ & mjINPUT_FF) {
+      ctrllimiteds_[j] = ffrange[0] < ffrange[1];
+      ctrlranges_[j][0] = ffrange[0];
+      ctrlranges_[j][1] = ffrange[1];
     }
   }
 }
@@ -7131,7 +7671,6 @@ void mjCSensor::ResolveReferences(const mjCModel* m) {
 mjtDataType sensorDatatype(mjtSensor type) {
   switch (type) {
   case mjSENS_TOUCH:
-  case mjSENS_RANGEFINDER:
   case mjSENS_INSIDESITE:
     return mjDATATYPE_POSITIVE;
 
@@ -7178,6 +7717,7 @@ mjtDataType sensorDatatype(mjtSensor type) {
   case mjSENS_SUBTREEANGMOM:
   case mjSENS_GEOMDIST:
   case mjSENS_GEOMFROMTO:
+  case mjSENS_RANGEFINDER:
   case mjSENS_CONTACT:
   case mjSENS_TACTILE:
   case mjSENS_E_POTENTIAL:
@@ -7273,6 +7813,31 @@ void mjCSensor::Compile(void) {
     throw mjCError(this, "negative cutoff in sensor");
   }
 
+  // require non-negative interval
+  if (interval[0] < 0) {
+    throw mjCError(this, "negative interval in sensor");
+  }
+
+  // require non-positive phase
+  if (interval[1] > 0) {
+    throw mjCError(this, "positive phase in sensor");
+  }
+
+  // require phase > -period (values outside this are equivalent modulo period)
+  if (interval[0] > 0 && interval[1] <= -interval[0]) {
+    throw mjCError(this, "phase must be greater than -period in sensor");
+  }
+
+  // require nsample for delay
+  if (delay > 0 && nsample <= 0) {
+    throw mjCError(this, "setting delay > 0 without a history buffer");
+  }
+
+  // validate nsample size (max 2^24)
+  if (nsample > 16777216) {
+    throw mjCError(this, "at most 2^24 samples in sensor history buffer, got %d", nullptr, nsample);
+  }
+
   // Find referenced object
   ResolveReferences(model);
 
@@ -7295,7 +7860,6 @@ void mjCSensor::Compile(void) {
     case mjSENS_FORCE:
     case mjSENS_TORQUE:
     case mjSENS_MAGNETOMETER:
-    case mjSENS_RANGEFINDER:
     case mjSENS_CAMPROJECTION:
       // must be attached to site
       if (objtype != mjOBJ_SITE) {
@@ -7307,6 +7871,30 @@ void mjCSensor::Compile(void) {
         mjCCamera* camref = (mjCCamera*)ref;
         if (!camref->resolution[0] || !camref->resolution[1]) {
           throw mjCError(this, "camera projection sensor requires camera resolution");
+        }
+      }
+      break;
+
+    case mjSENS_RANGEFINDER:
+      {
+        // must be attached to site or camera
+        if (objtype != mjOBJ_SITE && objtype != mjOBJ_CAMERA) {
+          throw mjCError(this, "sensor must be attached to site or camera");
+        }
+
+        // check for dataspec correctness
+        int dataspec = intprm[0];
+        if (dataspec <= 0) {
+          throw mjCError(this, "data spec (intprm[0]) must be positive, got %d", nullptr, dataspec);
+        }
+        int mask = (1 << mjNRAYDATA) - 1;
+        if (!(dataspec & mask)) {
+          throw mjCError(this, "data spec intprm[0]=%d must have at least one bit set of the first "
+                         "mjNRAYDATA bits", nullptr, dataspec);
+        }
+        if (dataspec & ~mask) {
+          throw mjCError(this, "data spec intprm[0]=%d has bits set beyond the first "
+                         "mjNRAYDATA bits", nullptr, dataspec);
         }
       }
       break;
@@ -7547,6 +8135,11 @@ void mjCSensor::Compile(void) {
   }
 
   dim = mjs_sensorDim(this);
+
+  // actuator sensors report one value per force output
+  if (type == mjSENS_ACTUATORPOS || type == mjSENS_ACTUATORVEL || type == mjSENS_ACTUATORFRC) {
+    dim = ((mjCActuator*)obj)->outnum_;
+  }
 
   // check cutoff for incompatible data types
   if (cutoff > 0 && (datatype == mjDATATYPE_QUATERNION ||

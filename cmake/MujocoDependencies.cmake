@@ -35,32 +35,31 @@ set(MUJOCO_DEP_VERSION_ccd
     CACHE STRING "Version of `ccd` to be fetched."
 )
 set(MUJOCO_DEP_VERSION_qhull
-    62ccc56af071eaa478bef6ed41fd7a55d3bb2d80
+    d1c2fc0caa5f644f3a0f220290d4a868c68ed4f6
     CACHE STRING "Version of `qhull` to be fetched."
 )
+set(MUJOCO_DEP_VERSION_miniz
+    d10b03cc73475af673df40f06e5cefd1d5f940d9
+    CACHE STRING "Version of `miniz` to be fetched."
+)
 set(MUJOCO_DEP_VERSION_Eigen3
-    49623d0c4e1af3c680845191948d10f6d3e92f8a
+    ea13a98decd497a8c5588fb5de71b57bcf10d864
     CACHE STRING "Version of `Eigen3` to be fetched."
 )
 
 set(MUJOCO_DEP_VERSION_abseil
-    d38452e1ee03523a208362186fd42248ff2609f6 # LTS 20250814.1
+    5650e9cf76d3be4318d5fa3af38ee483ddfd5e4a # LTS 20260526.0
     CACHE STRING "Version of `abseil` to be fetched."
 )
 
 set(MUJOCO_DEP_VERSION_gtest
-    52eb8108c5bdec04579160ae17225d66034bd723 # v1.17.0
+    063de7e9578f82b369302001269680b4b1553359 # v1.18.0
     CACHE STRING "Version of `gtest` to be fetched."
 )
 
 set(MUJOCO_DEP_VERSION_benchmark
-    5f7d66929fb66869d96dfcbacf0d8a586b33766d
+    834a61fc65e8b7885fcf177f1230ae4b897118fa
     CACHE STRING "Version of `benchmark` to be fetched."
-)
-
-set(MUJOCO_DEP_VERSION_TriangleMeshDistance
-    2cb643de1436e1ba8e2be49b07ec5491ac604457
-    CACHE STRING "Version of `TriangleMeshDistance` to be fetched."
 )
 
 mark_as_advanced(MUJOCO_DEP_VERSION_lodepng)
@@ -73,7 +72,6 @@ mark_as_advanced(MUJOCO_DEP_VERSION_Eigen3)
 mark_as_advanced(MUJOCO_DEP_VERSION_abseil)
 mark_as_advanced(MUJOCO_DEP_VERSION_gtest)
 mark_as_advanced(MUJOCO_DEP_VERSION_benchmark)
-mark_as_advanced(MUJOCO_DEP_VERSION_TriangleMeshDistance)
 
 include(FetchContent)
 include(FindOrFetch)
@@ -106,7 +104,11 @@ if(NOT TARGET lodepng)
     add_library(lodepng STATIC ${LODEPNG_HEADERS} ${LODEPNG_SRCS})
     target_compile_options(lodepng PRIVATE ${MUJOCO_MACOS_COMPILE_OPTIONS})
     target_link_options(lodepng PRIVATE ${MUJOCO_MACOS_LINK_OPTIONS})
-    target_include_directories(lodepng PUBLIC ${lodepng_SOURCE_DIR})
+    if(NOT EMSCRIPTEN)
+      target_include_directories(lodepng PUBLIC ${lodepng_SOURCE_DIR})
+    else()
+      target_include_directories(lodepng PUBLIC  $<BUILD_INTERFACE:${lodepng_SOURCE_DIR}> $<INSTALL_INTERFACE:include>)
+    endif()
   endif()
 endif()
 
@@ -125,6 +127,10 @@ if(NOT TARGET marchingcubecpp)
 endif()
 
 set(QHULL_ENABLE_TESTING OFF)
+# Patch changes in https://github.com/qhull/qhull/pull/173.patch
+set(QHULL_PATCH_COMMAND
+  git --git-dir=. -c core.autocrlf=false -c core.whitespace=cr-at-eol apply --verbose --whitespace=fix --ignore-space-change ${mujoco_SOURCE_DIR}/cmake/qhull-support-emscripten.patch
+)
 
 findorfetch(
   USE_SYSTEM_PACKAGE
@@ -140,6 +146,7 @@ findorfetch(
   TARGETS
   qhull
   EXCLUDE_FROM_ALL
+  PATCH_COMMAND ${QHULL_PATCH_COMMAND}
 )
 # MuJoCo includes a file from libqhull_r which is not exported by the qhull include directories.
 # Add it to the target.
@@ -193,32 +200,19 @@ if(CMAKE_POLICY_VERSION_MINIMUM_LOCALLY_DEFINED)
   unset(CMAKE_POLICY_VERSION_MINIMUM_LOCALLY_DEFINED)
 endif()
 
-if(NOT TARGET trianglemeshdistance)
-  FetchContent_Declare(
-    trianglemeshdistance
-    GIT_REPOSITORY https://github.com/InteractiveComputerGraphics/TriangleMeshDistance.git
-    GIT_TAG ${MUJOCO_DEP_VERSION_TriangleMeshDistance}
-  )
-
-  FetchContent_GetProperties(trianglemeshdistance)
-  if(NOT trianglemeshdistance_POPULATED)
-    FetchContent_Populate(trianglemeshdistance)
-    # Patch the source code to silence a warning/error related to a loop variable creating a copy.
-    # Since this is a header only library this fix is less intrusive than disabling the warning for
-    # any target including the header.
-    set(TMD_HEADER ${trianglemeshdistance_SOURCE_DIR}/TriangleMeshDistance/include/tmd/TriangleMeshDistance.h)
-    file(READ ${TMD_HEADER} TMD_CONTENT)
-    string(REPLACE
-      "for (const auto edge_count : edges_count) {"
-      "for (const auto& edge_count : edges_count) {"
-      TMD_CONTENT "${TMD_CONTENT}")
-    file(WRITE ${TMD_HEADER} "${TMD_CONTENT}")
-    include_directories(${trianglemeshdistance_SOURCE_DIR})
-  endif()
+# build ccd in single precision when MuJoCo is built with mjUSESINGLE
+if(CMAKE_C_FLAGS MATCHES "mjUSESINGLE")
+  set(ENABLE_DOUBLE_PRECISION OFF)
+else()
+  set(ENABLE_DOUBLE_PRECISION ON)
 endif()
-
-set(ENABLE_DOUBLE_PRECISION ON)
 set(CCD_HIDE_ALL_SYMBOLS ON)
+
+# Patch changes in https://github.com/danfis/libccd/pull/83.patch
+set(CCD_PATCH_COMMAND
+  git --git-dir=. -c core.autocrlf=false -c core.whitespace=cr-at-eol apply --verbose --whitespace=fix --ignore-space-change ${mujoco_SOURCE_DIR}/cmake/ccd-support-emscripten.patch
+)
+
 # update cmake_minimum_required version for compatibility with newer version of cmake
 if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
   set(CMAKE_POLICY_VERSION_MINIMUM ${MUJOCO_CMAKE_MIN_REQ})
@@ -238,6 +232,7 @@ findorfetch(
   TARGETS
   ccd
   EXCLUDE_FROM_ALL
+  PATCH_COMMAND ${CCD_PATCH_COMMAND}
 )
 if(CMAKE_POLICY_VERSION_MINIMUM_LOCALLY_DEFINED)
   unset(CMAKE_POLICY_VERSION_MINIMUM)
@@ -257,7 +252,28 @@ if(WIN32)
   endif()
 endif()
 
-if(MUJOCO_BUILD_TESTS)
+if(DEFINED BUILD_TESTS)
+  set(_OLD_BUILD_TESTS "${BUILD_TESTS}")
+  set(_BUILD_TESTS_WAS_DEFINED TRUE)
+else()
+  set(_BUILD_TESTS_WAS_DEFINED FALSE)
+endif()
+set(BUILD_TESTS OFF)
+fetchpackage(
+  PACKAGE_NAME  miniz
+  GIT_REPO      https://github.com/richgel999/miniz.git
+  GIT_TAG       ${MUJOCO_DEP_VERSION_miniz}
+  TARGETS       miniz
+)
+if(_BUILD_TESTS_WAS_DEFINED)
+  set(BUILD_TESTS "${_OLD_BUILD_TESTS}")
+else()
+  unset(BUILD_TESTS)
+endif()
+unset(_BUILD_TESTS_WAS_DEFINED)
+
+
+if(MUJOCO_BUILD_TESTS OR MUJOCO_BUILD_STUDIO OR MUJOCO_USE_FILAMENT)
   set(ABSL_PROPAGATE_CXX_STD ON)
 
   # This specific version of Abseil does not have the following variable. We need to work with BUILD_TESTING
@@ -267,6 +283,9 @@ if(MUJOCO_BUILD_TESTS)
       CACHE INTERNAL "Build tests."
   )
 
+  set(ABSL_PATCH_COMMAND
+    git --git-dir=. -c core.autocrlf=false -c core.whitespace=cr-at-eol apply --verbose --whitespace=fix --ignore-space-change ${mujoco_SOURCE_DIR}/cmake/abseil-cpp-source_location.patch
+  )
   set(ABSL_BUILD_TESTING OFF)
   findorfetch(
     USE_SYSTEM_PACKAGE
@@ -282,12 +301,17 @@ if(MUJOCO_BUILD_TESTS)
     TARGETS
     absl::core_headers
     EXCLUDE_FROM_ALL
+    PATCH_COMMAND
+    ${ABSL_PATCH_COMMAND}
   )
 
   set(BUILD_TESTING
       ${BUILD_TESTING_OLD}
       CACHE BOOL "Build tests." FORCE
   )
+endif()
+
+if(MUJOCO_BUILD_TESTS)
 
   # Avoid linking errors on Windows by dynamically linking to the C runtime.
   set(gtest_force_shared_crt
@@ -320,9 +344,7 @@ if(MUJOCO_BUILD_TESTS)
         "sed"
         "-i"
         "-e"
-        "s/-std=c++11/-std=c++14/g"
-        "-e"
-        "s/HAVE_CXX_FLAG_STD_CXX11/HAVE_CXX_FLAG_STD_CXX14/g"
+        "s/-Wformat=2/-Wformat/g"
         "${CMAKE_BINARY_DIR}/_deps/benchmark-src/CMakeLists.txt"
     )
   endif()

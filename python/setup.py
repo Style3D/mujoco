@@ -41,10 +41,10 @@ EXT_PREFIX = 'mujoco.'
 def get_long_description():
   """Creates a long description for the package from bundled markdown files."""
   current_dir = os.path.dirname('__file__')
-  with open(os.path.join(current_dir, 'README.md')) as f:
+  with open(os.path.join(current_dir, 'README.md'), encoding='utf-8') as f:
     description = f.read()
   try:
-    with open(os.path.join(current_dir, 'LICENSES_THIRD_PARTY.md')) as f:
+    with open(os.path.join(current_dir, 'LICENSES_THIRD_PARTY.md'), encoding='utf-8') as f:
       description = f'{description}\n{f.read()}'
   except FileNotFoundError:
     pass
@@ -155,11 +155,11 @@ class BuildCMakeExtension(build_ext.build_ext):
     self._configure_cmake()
     for ext in self.extensions:
       assert ext.name.startswith(EXT_PREFIX)
-      assert '.' not in ext.name[len(EXT_PREFIX) :]
       self.build_extension(ext)
     self._copy_external_libraries()
     self._copy_mujoco_headers()
     self._copy_plugin_libraries()
+    self._copy_studio_assets()
     if self._is_apple:
       self._copy_mjpython()
 
@@ -218,10 +218,54 @@ class BuildCMakeExtension(build_ext.build_ext):
     )
     os.makedirs(dst)
     for directory, _, filenames in os.walk(self._mujoco_include_path):
+      rel_dir = os.path.relpath(directory, self._mujoco_include_path)
+
+      # Skip third-party directories
+      if rel_dir.startswith(('SDL2', 'math', 'misc')):
+        continue
+
       for filename in fnmatch.filter(filenames, '*.h'):
-        shutil.copyfile(
-            os.path.join(directory, filename), os.path.join(dst, filename)
+        rel_file_path = os.path.relpath(
+            os.path.join(directory, filename), self._mujoco_include_path
         )
+
+        # Skip third-party files in the root include path (for framework case)
+        if rel_dir == '.' and not (
+            filename == 'mujoco.h' or filename.startswith('mj')
+        ):
+          continue
+
+        # Reconstruct destination path preserving structure
+        # Strip leading 'mujoco/' if present to avoid duplicate 'mujoco/mujoco/'
+        if rel_file_path.startswith('mujoco/'):
+          target_rel_path = rel_file_path[len('mujoco/') :]
+        else:
+          target_rel_path = rel_file_path
+
+        target_dst = os.path.join(dst, target_rel_path)
+        os.makedirs(os.path.dirname(target_dst), exist_ok=True)
+        shutil.copyfile(os.path.join(directory, filename), target_dst)
+
+
+  def _copy_studio_assets(self):
+    assets_src = None
+    for directory, subdirs, _ in os.walk(os.environ[MUJOCO_PATH]):
+      if 'assets' in subdirs:
+        candidate = os.path.join(directory, 'assets')
+        if os.path.exists(os.path.join(candidate, 'fontawesome-webfont.ttf')):
+          assets_src = candidate
+          break
+
+    if assets_src:
+      dst = os.path.join(
+          os.path.dirname(self.get_ext_fullpath(self.extensions[0].name)),
+          'experimental/studio/assets',
+      )
+      if os.path.exists(dst):
+        shutil.rmtree(dst)
+      shutil.copytree(assets_src, dst)
+    else:
+      print("Warning: Studio assets not found in MUJOCO_PATH. Skipping.")
 
   def _copy_mjpython(self):
     src_dir = os.path.join(os.path.dirname(__file__), 'mujoco/mjpython')
@@ -268,7 +312,6 @@ class BuildCMakeExtension(build_ext.build_ext):
         ),
         '-DCMAKE_Fortran_COMPILER:STRING=',
         '-DBUILD_TESTING:BOOL=OFF',
-        '-DMUJOCO_BUILD_TESTS:BOOL=OFF',
     ]
 
     if self._mujoco_framework_path is not None:
@@ -303,32 +346,34 @@ class BuildCMakeExtension(build_ext.build_ext):
     print('Configuring CMake with the following arguments:')
     for arg in cmake_args:
       print(f'    {arg}')
-
-    print(f'cmake1 ')
-    cmake_dir = os.path.join(os.path.dirname(__file__), 'mujoco')
-    print(f'CMakeDIR {cmake_dir}')
-    print(f'BuildTemp {self.build_temp}')
     subprocess.check_call(
         [cmake]
         + cmake_args
-        + [cmake_dir] ,
+        + [os.path.join(os.path.dirname(__file__), 'mujoco')],
         cwd=self.build_temp,
     )
 
     print('Building all extensions with CMake')
     subprocess.check_call(
         [cmake, '--build', '.', f'-j{os.cpu_count()}', '--config', build_cfg],
-        cwd = self.build_temp,
+        cwd=self.build_temp,
     )
 
   def build_extension(self, ext):
     dest_path = self.get_ext_fullpath(ext.name)
-    if  os.name == 'nt':
-      build_path = os.path.join(self.build_temp, 'Release',os.path.basename(dest_path))
-    else :
-      build_path = os.path.join(self.build_temp, os.path.basename(dest_path))
-    print(" copy:-> ",build_path,'->',dest_path)
-    shutil.copyfile(build_path, dest_path)
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    # Reconstruct relative path from extension name to support nested extensions
+    rel_ext_name = ext.name[len(EXT_PREFIX):]
+    rel_path = rel_ext_name.replace('.', '/')
+    filename = os.path.basename(dest_path)
+    rel_dir = os.path.dirname(rel_path)
+
+    build_path = os.path.join(self.build_temp, rel_dir, filename)
+    if os.path.exists(build_path):
+      shutil.copyfile(build_path, dest_path)
+    else:
+      print(f"Warning: Extension {ext.name} was not built by CMake. Skipping.")
 
 
 class InstallScripts(install_scripts.install_scripts):
@@ -382,6 +427,15 @@ setuptools.setup(
         CMakeExtension('mujoco._simulate'),
         CMakeExtension('mujoco._specs'),
         CMakeExtension('mujoco._structs'),
+        # Studio extensions
+        CMakeExtension('mujoco.experimental.studio.parser'),
+        CMakeExtension('mujoco.experimental.studio.native_viewer_cc'),
+        CMakeExtension('mujoco.experimental.studio.renderer'),
+        CMakeExtension('mujoco.experimental.studio.ux'),
+        CMakeExtension('mujoco.experimental.studio.sim'),
+        # ImGui/ImPlot extensions
+        CMakeExtension('mujoco.experimental.dear_imgui.dear_imgui'),
+        CMakeExtension('mujoco.experimental.implot.implot'),
     ],
     scripts=['mujoco/mjpython/mjpython.py']
     if platform.system() == 'Darwin'

@@ -26,7 +26,7 @@ Tutorial notebook
 
 A MuJoCo tutorial using the Python bindings is available here: |mjcolab|
 
-.. |mjcolab| image:: https://colab.research.google.com/assets/colab-badge.svg
+.. |mjcolab| image:: https://colab.research.google.com/assets/colab-badge.png
              :target: https://colab.research.google.com/github/google-deepmind/mujoco/blob/main/python/tutorial.ipynb
 
 .. _PyInstallation:
@@ -269,11 +269,13 @@ initialized with ``mjv_makeScene(model, [the new mjvScene instance], 10)`` in C.
 used, the corresponding deallocation function ``mj_freeFoo/mj_deleteFoo`` is automatically called when the Python
 object is deleted. The user does not need to manually free resources.
 
-The ``mujoco.MjModel`` class does not a have Python constructor. Instead, we provide three static factory functions
+The ``mujoco.MjModel`` class does not have a Python constructor. Instead, we provide three static factory functions
 that create a new :ref:`mjModel` instance: ``mujoco.MjModel.from_xml_string``, ``mujoco.MjModel.from_xml_path``, and
 ``mujoco.MjModel.from_binary_path``. The first function accepts a model XML as a string, while the latter two
 functions accept the path to either an XML or MJB model file. All three functions optionally accept a Python
 dictionary which is converted into a MuJoCo :ref:`Virtualfilesystem` for use during model compilation.
+
+
 
 .. _PyFunctions:
 
@@ -514,16 +516,64 @@ The ``MjSpec`` object wraps the :ref:`mjSpec` struct and can be constructed in t
 
 Note the ``from_string()`` and ``from_file()`` methods can only be called at construction time.
 
+.. _PyVFS:
+
 Assets
 ^^^^^^
 
-All three methods take in an optional argument called ``assets`` which is used to resolve asset references in the XML.
-This argument is a dictionary that maps asset name (string) to asset data (bytes), as demonstrated below:
+MuJoCo optionally uses a :ref:`Virtual File System <Virtualfilesystem>` (VFS) to load assets (like meshes and textures)
+from memory. Some :ref:`decoders<exDecoder>` may also choose to leverage the VFS as a way to load assets on
+demand, such as when addressing files in an archive format. This requires the same VFS to be used when parsing and
+compiling a spec (and all attached specs) into a model.
+
+The Python bindings provide the ``mujoco.MjVfs`` as a wrapper around the :ref:`mjVFS` C struct.
+
+``MjVfs`` supports the context manager protocol, which ensures that resources are properly freed when leaving the block:
+
+.. code-block:: python
+
+   with mujoco.MjVfs() as vfs:
+       vfs["model.xml"] = b"<mujoco/>"
+       spec = mujoco.MjSpec.from_string("model.xml", vfs=vfs)
+       spec.compile(vfs=vfs)
+
+You can also create an instance directly and call ``close()`` when done:
+
+.. code-block:: python
+
+   vfs = mujoco.MjVfs()
+   vfs["model.xml"] = some_xml_string.encode("utf-8")
+   spec = mujoco.MjSpec.from_file("model.xml", vfs=vfs)
+   spec.compile(vfs=vfs)
+   vfs.close()
+
+The ``MjVfs`` object supports dictionary-like operations to manage buffers:
+
+- ``vfs["name"] = data``: Adds a buffer to the VFS. ``data`` must be of type ``bytes``.
+- ``del vfs["name"]``: Deletes a file from the VFS.
+- ``"name" in vfs``: Checks if a file exists in the VFS.
+
+The static factory functions ``mujoco.MjModel.from_xml_string``, ``mujoco.MjModel.from_xml_path``,
+``mujoco.MjSpec.from_string`` and ``mujoco.MjSpec.from_file`` accept an optional ``vfs`` argument. Additionally, the
+``spec.compile()`` function also accepts an optional ``vfs`` argument.
+
+.. warning::
+   The previous way of passing assets via a dictionary mapping asset names to bytes is **deprecated** and will be
+   removed in the next release. You cannot specify both the ``assets`` dictionary and the ``vfs`` argument at the same
+   time. ``MjVfs`` should be used as a drop-in replacement.
+
+For reference, the deprecated ``assets`` dictionary approach looked like this:
 
 .. code-block:: python
 
   assets = {'image.png': b'image_data'}
   spec = mujoco.MjSpec.from_string(xml_referencing_image_png, assets=assets)
+  model = spec.compile()
+
+  # Or
+
+  spec = mujoco.MjSpec.from_string(xml_referencing_image_png)
+  spec.assets = {'image.png': b'image_data'}
   model = spec.compile()
 
 Save to XML
@@ -547,6 +597,26 @@ Compiled ``MjSpec`` objects can be saved to XML string with the ``to_xml()`` met
      </worldbody>
    </mujoco>
 
+Alternatively, specs or compiled models can be serialized to a file using ``encode()``:
+
+.. code-block:: python
+
+   # Save spec directly to an MJCF XML file
+   spec.encode('model.xml')
+
+   # Save XML from a compiled model; copies modified model values back to spec prior to saving
+   spec.encode('model.xml', model=model)
+
+   # Save compiled model to binary MJB format (serializes mjModel only, not spec)
+   spec.encode('model.mjb', model=model)
+
+   # Package spec and all referenced external assets (meshes, textures) into an MJZ zip archive
+   spec.encode('robot.mjz', model=model)
+
+The ``encode()`` method accepts the target filename, an optional compiled ``model`` (:ref:`MjModel`), an optional
+``vfs`` (:ref:`MjVFS`), and an optional ``content_type``. The target format is automatically determined by the file
+extension (``.xml``, ``.mjb``, ``.txt``, ``.mjz``) or content type.
+
 Attachment
 ----------
 
@@ -560,8 +630,8 @@ It is possible to combine multiple specs by using attachments. The following opt
     the reference to a frame, which is the attached worldbody transformed into a frame. The site must belong to the
     child spec. Prefix and suffix can also be specified as keyword arguments.
 -   Attach a child spec to a frame in the parent spec: ``parent_spec.attach(child_spec, frame=frame_name_or_obj)``,
-    returns the reference to a frame, which is the attached worldbody transformed into a frame. The frame must belong to
-    the child spec. Prefix and suffix can also be specified as keyword arguments.
+    returns the reference to a frame, which is the attached worldbody transformed into a frame. The frame must
+    belong to the child spec. Prefix and suffix can also be specified as keyword arguments.
 
 The default behavior of attaching is to not copy, so all the child references (except for the worldbody) are still valid
 in the parent and therefore modifying the child will modify the parent. This is not true for the attach
@@ -653,6 +723,17 @@ The :ref:`mjsMesh` object includes convenience methods for model creation with n
 
    mesh = spec.add_mesh(name='prism')
    mesh.make_cone(nedge=5, radius=1)
+
+Texture editing
+^^^^^^^^^^^^^^^
+The :ref:`mjsTexture` buffer option stores the texture bytes in the ``data`` attribute. This attribute can be read and
+modified, for example:
+
+.. code-block:: python
+
+  texture = spec.add_texture(name='texture', height=1, width=3, nchannel=3)
+  texture.data = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255])  # Assign red, green and blue pixels.
+  texture.data[1] = 255  # Change the first pixel to yellow.
 
 .. _PyMJCF:
 
@@ -786,7 +867,7 @@ The ``mujoco`` package contains two sub-modules: ``mujoco.rollout`` and ``mujoco
 
 rollout
 -------
-``mujoco.rollout`` and ``mujoco.rollout.Rollout`` shows how to add additional C/C++ functionality, exposed as a Python
+``mujoco.rollout`` and ``mujoco.rollout.Rollout`` show how to add additional C/C++ functionality, exposed as a Python
 module via pybind11. It is implemented in `rollout.cc
 <https://github.com/google-deepmind/mujoco/blob/main/python/mujoco/rollout.cc>`__ and wrapped in `rollout.py
 <https://github.com/google-deepmind/mujoco/blob/main/python/mujoco/rollout.py>`__. The module addresses a common
@@ -796,7 +877,7 @@ values. The rollouts are run in parallel with an internally managed thread pool 
 thread) are passed as an argument. This notebook shows how to use ``rollout`` |rollout_colab|, along with some
 benchmarks e.g., the figure below.
 
-.. |rollout_colab| image:: https://colab.research.google.com/assets/colab-badge.svg
+.. |rollout_colab| image:: https://colab.research.google.com/assets/colab-badge.png
                    :target: https://colab.research.google.com/github/google-deepmind/mujoco/blob/main/python/rollout.ipynb
 
 .. image:: images/python/rollout.png
@@ -814,9 +895,9 @@ The basic usage form is
 - ``data`` is either a single instance of MjData or a sequence of compatible MjDatas of length ``nthread``.
 - ``initial_state`` is an ``nbatch x nstate`` array, with ``nbatch`` initial states of size ``nstate``, where
   ``nstate = mj_stateSize(model, mjtState.mjSTATE_FULLPHYSICS)`` is the size of the
-  :ref:`full physics state<geFullPhysics>`.
+  :ref:`full physics state<siFullPhysics>`.
 - ``control`` is a ``nbatch x nstep x ncontrol`` array of controls. Controls are by default the ``mjModel.nu`` standard
-  actuators, but any combination of :ref:`user input<geInput>` arrays can be specified by passing an optional
+  actuators, but any combination of :ref:`user input<siInput>` arrays can be specified by passing an optional
   ``control_spec`` bitflag.
 
 If a rollout diverges, the current state and sensor values are used to fill the remainder of the trajectory.
@@ -868,7 +949,7 @@ This module contains optimization-related utilities.
 The ``minimize.least_squares()`` function implements a nonlinear Least Squares optimizer solving sequential
 Quadratic Programs with :ref:`mju_boxQP`. It is documented in the associated notebook: |lscolab|
 
-.. |lscolab| image:: https://colab.research.google.com/assets/colab-badge.svg
+.. |lscolab| image:: https://colab.research.google.com/assets/colab-badge.png
              :target: https://colab.research.google.com/github/google-deepmind/mujoco/blob/main/python/least_squares.ipynb
 
 .. _PyUSDexport:
@@ -911,8 +992,7 @@ custom cameras and lights. The constructor arguments of a ``USDExporter`` instan
 - ``model``: An MjModel instance. The USD exporter reads relevant information from the model including details about
   cameras, lights, textures, and object geometries.
 
-- ``max_geom``: Maximum number of geoms in a scene, required when instatiating the internal .
-  `mjvScene <https://mujoco.readthedocs.io/en/stable/APIreference/APItypes.html#mjvscene>`__.
+- ``max_geom``: Maximum number of geoms in a scene, required when instantiating the internal :ref:`mjvScene`.
 
 - ``output_directory``: Name of the directory under which the exported USD file and all relevant
   assets are stored. When saving a scene/trajectory as a USD file, the exporter creates the following directory
@@ -1073,7 +1153,7 @@ non-exhaustive list of specific mujoco-py features:
    The MuJoCo library’s computation is deterministic given a specific input, as explained in the :ref:`Programming
    section <Simulation>`. mujoco-py implements methods for getting and setting some of the relevant fields (and
    similarly ``dm_control.Physics`` offers methods that correspond to the flattened case). This functionality is
-   described in the :ref:`state <geState>` section.
+   described in the :ref:`State and Control<siStateControl>` section.
 
 ``sim.model.get_joint_qvel_addr(joint_name)``
    This is a convenience method in mujoco-py that returns a list of contiguous indices corresponding to this joint. The

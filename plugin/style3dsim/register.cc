@@ -17,7 +17,7 @@
 
 namespace mujoco::plugin::style3dsim {
 
-mjPLUGIN_LIB_INIT {
+mjPLUGIN_LIB_INIT(style3dsim) {
   Style3DSim::RegisterPlugin();
 }
 
