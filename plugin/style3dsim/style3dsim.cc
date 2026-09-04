@@ -20,7 +20,7 @@
 #include <cstring>
 
 #include <mujoco/mjplugin.h>
-#include <mujoco/mjtnum.h>
+#include <mujoco/mjtype.h>
 #include <mujoco/mujoco.h>
 #include "style3dsim.h"
 

@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath('../'))
 sys.path.append(os.path.abspath('ext'))
+sys.path.insert(0, os.path.abspath('../mjx/mujoco/mjx/third_party'))
 
 from sphinxcontrib import katex  # pylint: disable=g-import-not-at-top
 from sphinxcontrib import youtube  # pylint: disable=g-import-not-at-top,unused-import
@@ -45,10 +46,12 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'sphinx.ext.extlinks',
     'sphinxcontrib.bibtex',
     'sphinxcontrib.katex',
     'sphinxcontrib.youtube',
     'sphinx_copybutton',
+    'sphinx_design',
     'sphinx_favicon',
     'sphinx_reredirects',
     'sphinx_toolbox.collapse',
@@ -57,12 +60,51 @@ extensions = [
     'mujoco_include',
 ]
 
+napoleon_custom_sections = [('warp only fields', 'attributes')]
+
+# Links to GitHub issues and pull requests.
+extlinks = {
+    'issue': (
+        'https://github.com/google-deepmind/mujoco/issues/%s',
+        'issue #%s',
+    ),
+    'pr': ('https://github.com/google-deepmind/mujoco/pull/%s', 'PR #%s'),
+    'commit': ('https://github.com/google-deepmind/mujoco/commit/%s', '%s'),
+}
+
 # MuJoCo Warp documentation
 napoleon_google_docstring = True
 autodoc_class_signature = 'separated'
 add_module_names = False
 toc_object_entries_show_parents = 'hide'
 default_role = 'literal'
+
+
+# Suppress warnings from docstrings with RST formatting issues
+def setup(app):
+  import logging
+
+  class SphinxWarningFilter(logging.Filter):
+
+    def filter(self, record):
+      msg = record.getMessage()
+      # e.g. qpos0: qpos values at default pose (*, nq)
+      if 'Inline emphasis start-string' in msg:
+        return False
+      # e.g. see `name` for details
+      if 'Inline interpreted text' in msg:
+        return False
+      # e.g. multi-line definition without trailing blank line
+      if 'Definition list ends without a blank line' in msg:
+        return False
+      # e.g. mjsactuator_ reference in C++ docstrings
+      if 'Unknown target name' in msg:
+        return False
+      return True
+
+  for handler in logging.getLogger('sphinx').handlers:
+    handler.addFilter(SphinxWarningFilter())
+
 
 # GitHub-related options
 github_username = 'google-deepmind'
@@ -127,6 +169,7 @@ SHARED_CSS_VARIABLES = {
 # font-stack--monospace used in code blocks, Inconsolata fits in 100 chars.
 html_theme_options = {
     'light_css_variables': {
+        'color-brand-visited': 'var(--color-brand-content)',
         'font-stack--monospace': 'Inconsolata,Consolas,ui-monospace,monospace',
         'at-color': '#830b2b',
         'at-val-color': '#bc103e',
@@ -141,6 +184,7 @@ html_theme_options = {
         'wy-nav-side-background-color': '#0053d6',
     },
     'dark_css_variables': {
+        'color-brand-visited': 'var(--color-brand-content)',
         'at-color': '#ffaab7',
         'at-val-color': '#ff95a6',
         'body-color': '#14234b',

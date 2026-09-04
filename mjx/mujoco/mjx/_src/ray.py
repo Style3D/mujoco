@@ -237,7 +237,7 @@ def ray(
     vec: jax.Array,
     geomgroup: Sequence[int] = (),
     flg_static: bool = True,
-    bodyexclude: int = -1,
+    bodyexclude: Sequence[int] | int = -1,
 ) -> Tuple[jax.Array, jax.Array]:
   """Returns the geom id and distance at which a ray intersects with a geom.
 
@@ -248,19 +248,23 @@ def ray(
     vec: ray direction    (3,)
     geomgroup: group inclusion/exclusion mask, or empty to ignore
     flg_static: if True, allows rays to intersect with static geoms
-    bodyexclude: ignore geoms on specified body id
+    bodyexclude: ignore geoms on specified body id or sequence of body ids
 
   Returns:
-    dist: distance from ray origin to geom surface (or -1.0 for no intersection)
-    id: id of intersected geom (or -1 for no intersection)
+    Distance from ray origin to geom surface (or -1.0 for no intersection) and
+    id of intersected geom (or -1 for no intersection)
   """
 
   dists, ids = [], []
-  geom_filter = m.geom_bodyid != bodyexclude
-  geom_filter &= flg_static | (m.body_weldid[m.geom_bodyid] != 0)
+  if not isinstance(bodyexclude, Sequence):
+    bodyexclude = [bodyexclude]
+  geom_filter = flg_static | (m.body_weldid[m.geom_bodyid] != 0)
+  # Loop through the body IDs to exclude and update the filter
+  for bodyid in bodyexclude:
+    geom_filter &= (m.geom_bodyid != bodyid)
   if geomgroup:
-    geomgroup = np.array(geomgroup, dtype=bool)
-    geom_filter &= geomgroup[np.clip(m.geom_group, 0, mujoco.mjNGROUP)]
+    geomgroup = np.array(geomgroup, dtype=bool)  # pyrefly: ignore[bad-assignment]
+    geom_filter &= geomgroup[np.clip(m.geom_group, 0, mujoco.mjNGROUP)]  # pyrefly: ignore[bad-index]
 
   # map ray to local geom frames
   geom_pnts = jax.vmap(lambda x, y: x.T @ (pnt - y))(d.geom_xmat, d.geom_xpos)
@@ -277,7 +281,7 @@ def ray(
     args = m.geom_size[id_], geom_pnts[id_], geom_vecs[id_]
 
     if geom_type == GeomType.MESH:
-      dist, id_ = fn(m, id_, *args)
+      dist, id_ = fn(m, id_, *args)  # pyrefly: ignore[bad-argument-count, bad-argument-type]
     else:
       dist = jax.vmap(fn)(*args)
 
@@ -310,4 +314,4 @@ def ray_geom(
   Returns:
     dist: distance from ray origin to geom surface
   """
-  return _RAY_FUNC[geomtype](size, pnt, vec)
+  return _RAY_FUNC[geomtype](size, pnt, vec)  # pyrefly: ignore[bad-argument-type, bad-return, missing-argument]
